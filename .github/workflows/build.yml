@@ -50,13 +50,12 @@ jobs:
           }
           processResources {
             inputs.property "version", project.version
-            filesMatching("fabric.mod.json") { expand "version": inputs.properties.version }
           }
           tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
           java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
 
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='${version}'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.10.0 compact GUI rebuild'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
+          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.10.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.10.0 compact GUI rebuild'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
 
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
@@ -101,7 +100,7 @@ jobs:
         run: |
           JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
-          unzip -p "$JAR" fabric.mod.json | grep -q '0.10.0'
+          unzip -p "$JAR" fabric.mod.json | grep -Fq '"version": "0.10.0+26.3"'
           jar tf "$JAR" | grep -q 'com/eio/client/EioClient.class'
           echo "Verified $JAR"
 
