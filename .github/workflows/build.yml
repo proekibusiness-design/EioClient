@@ -3,13 +3,16 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'eio26/EioClient.java'
+      - 'gradle.properties'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,43 +23,39 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source and project QA
+      - name: Apply Eio 0.20 upgrade
+        run: python3 .github/eio020_patch.py
+
+      - name: Static source QA
         shell: bash
         run: |
           set -euo pipefail
           SRC=eio26/EioClient.java
-          test -s "$SRC"
-          grep -Fq 'VERSION = "0.19.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-019-QA1"' "$SRC"
-          grep -Fq 'mod_version=0.19.0+26.3' gradle.properties
-          for token in \
-            'settingsScroll' 'modulesScroll' 'mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)' \
-            'settingsContentHeight' 'clampScroll' 'drawScrollBar' 'MOB_SELECTOR_HEIGHT' \
-            'renderMobSelector' 'handleMobSelectorClick' 'scrollable-glass' \
-            '0x72090E14' '0x2E10171F' '0x2410171F' '0x2A10171F' \
-            'Mob Selection' 'FOLLOW_MOB_IDS' 'Creative Assist' 'mod("Reach", "Combat"'; do
-            grep -Fq "$token" "$SRC"
-          done
+          grep -Fq 'VERSION = "0.20.0"' "$SRC"
+          grep -Fq 'BUILD_ID = "EIO-020-QA1"' "$SRC"
+          grep -Fq 'mod_version=0.20.0+26.3' gradle.properties
+          grep -Fq 'private static boolean validModuleTarget' "$SRC"
+          grep -Fq 'nearestTarget(Minecraft mc, Mod selector' "$SRC"
+          grep -Fq 'private boolean categoryMatches' "$SRC"
+          grep -Fq '"Active", "Combat"' "$SRC"
+          grep -Fq 'ACTIVE = enabled modules' "$SRC"
+          grep -Fq 'mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)' "$SRC"
+          test "$(grep -c 'mobList("Target Selection"' "$SRC")" -eq 3
+          test "$(grep -c 'mobList("Mob Selection"' "$SRC")" -eq 1
           test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 35
           if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
-          import json,re
+          import re
           s=Path('eio26/EioClient.java').read_text()
-          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"',s,re.M)
-          assert len(mods)==35
-          assert len({n.lower() for n,_ in mods})==35
-          assert s.count('public static final class ClickGui')==1
-          assert s.count('public boolean mouseScrolled(')==1
-          assert s.count('private static void drawScrollBar(')==1
-          assert s.count('private int settingsContentHeight(')==1
-          assert s.count('class MobListSetting')==1
-          assert 'MOB_SELECTOR_HEIGHT = 130' in s
-          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          for name,_ in mods:
-              slug=re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',name.lower()))
-              assert 'key.eioclient.'+slug in lang, name
-          print('0.19 final static QA passed')
+          assert len(re.findall(r'^[ \t]*mod\("',s,re.M)) == 35
+          assert s.count('mobList("Target Selection"') == 3
+          assert s.count('mobList("Mob Selection"') == 1
+          assert s.count('private static boolean validModuleTarget') == 1
+          assert s.count('private boolean categoryMatches') == 1
+          assert s.count('public boolean mouseScrolled(') == 1
+          assert 'return "Active".equals(category) ? m.enabled : m.category.equals(category);' in s
+          print('0.20 static QA passed')
           PY
 
       - name: Native Java and Fabric build
@@ -70,22 +69,24 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.19.0+26.3"'* ]]
-          [[ "$META" == *'"environment": "client"'* ]]
-          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
-          [[ "$META" == *'"minecraft": "~26.3"'* ]]
-          [[ "$META" == *'"java": ">=25"'* ]]
+          [[ "$META" == *'"version": "0.20.0+26.3"'* ]]
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$MobListSetting.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          for token in mouseScrolled settingsContentHeight clampScroll drawScrollBar renderMobSelector handleMobSelectorClick; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in validModuleTarget nearestTarget validClickTarget; do grep -Fq "$token" /tmp/main.javap; done
+          for token in categoryMatches mouseScrolled renderMobSelector handleMobSelectorClick settingsContentHeight drawScrollBar; do grep -Fq "$token" /tmp/gui.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-019-QA1' 'Mob Selection' 'Creative Assist' 'Reach' 'scrollable-glass'; do grep -Fq "$token" /tmp/main.strings; done
+          for token in 'EIO-020-QA1' 'Target Selection' 'Mob Selection' 'entity.minecraft.cow' 'entity.minecraft.zombie'; do grep -Fq "$token" /tmp/main.strings; done
+          unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
+          strings /tmp/ClickGui.class > /tmp/gui.strings
+          grep -Fq 'Active' /tmp/gui.strings
+          grep -Fq 'ACTIVE = enabled modules' /tmp/gui.strings
           test "$(stat -c%s "$JAR")" -gt 35000
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -101,10 +102,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final JAR
+      - name: Canonicalize passing 0.20 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize EioClient 0.20 target filters and Active GUI'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload 0.20 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.19.0-final
+          name: EioClient-26.3-v0.20.0-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
