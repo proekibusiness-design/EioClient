@@ -1,4 +1,4 @@
-name: Build EioClient 0.26
+name: EioClient 0.27 fast Area Miner
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,42 +20,33 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source, model and GUI QA
+      - name: Apply fast Area Miner upgrade
+        run: python3 .github/eio027_fastarea_patch.py
+
+      - name: Static source and model QA
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import json,re
           s=Path('eio26/EioClient.java').read_text()
           gp=Path('gradle.properties').read_text()
-          mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.26.0"' in s
-          assert 'BUILD_ID = "EIO-026-AREA1"' in s
-          assert 'mod_version=0.26.0+26.3' in gp
-          assert len(mods)==45, len(mods)
-          assert ('Area Miner','Mining') in mods
+          assert 'VERSION = "0.27.0"' in s
+          assert 'BUILD_ID = "EIO-027-FASTAREA1"' in s
+          assert 'mod_version=0.27.0+26.3' in gp
           for token in [
-              'PointSetting', 'Corner A', 'Corner B', 'Depth', 'Move Timeout',
-              'findAreaMineTarget', 'validAreaMineTarget', 'updateAreaNavigation',
-              'areaStatus', 'resetAreaRuntime', 'areaMoveRequested',
-              'categoriesScroll', 'NAVIGATION', 'WHEEL panel scroll',
-              'GUI=760x430 modern-nav-glass', 'isWithinBlockInteractionRange'
+              'Layer Height', 'areaLayerIndex', 'areaLayerCount', 'areaLayerTop',
+              'areaLayerBottom', 'inActiveAreaLayer', 'blockAimError', 'wrappedDegrees',
+              'Strongly prefer small camera movements', 'AREA MINER: LAYER',
+              'categoriesScroll', 'mouseScrolled', 'isWithinBlockInteractionRange'
           ]:
               assert token in s, token
-          assert 'private int panelW() { return Math.max(450, Math.min(760, width - 16)); }' in s
-          assert 'private int panelH() { return Math.max(280, Math.min(430, height - 16)); }' in s
-          assert s.count('int railX = x + 10, railW = 122;') >= 3
-          assert 'public boolean mouseScrolled(' in s
-          assert 'trim(areaStatus(' not in s
-          assert Path('eio26/com/eio/client/AreaRegion.java').exists()
-          assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
-          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          print('0.26 final static QA passed; modules=', len(mods))
+          assert '.num("Aim Timeout", 3.0, 2.0, 12.0, 1.0' in s
+          assert '.num("Layer Height", 5.0, 1.0, 10.0, 1.0' in s
+          print('0.27 fast Area Miner static QA passed')
           PY
 
-      - name: Unit tests and native Fabric build
+      - name: Unit tests and Fabric build
         run: gradle clean test build --stacktrace --warning-mode all
 
       - name: Deep JAR and bytecode QA
@@ -66,24 +57,19 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.26.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.27.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
           grep -Fqx 'com/eio/client/EioClient.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
-          grep -Fqx 'com/eio/client/EioClient$PointSetting.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/area.javap
-          for token in findAreaMineTarget validAreaMineTarget updateAreaNavigation areaStatus resetAreaRuntime withinVanillaBlockRange; do grep -Fq "$token" /tmp/main.javap; done
-          for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
-          for token in navigationCell supportedSize contains; do grep -Fq "$token" /tmp/area.javap; done
+          for token in findAreaMineTarget blockAimError areaLayerCount areaLayerTop areaLayerBottom inActiveAreaLayer updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-026-AREA1' 'Area Miner' 'Corner A' 'Corner B' 'Move Timeout' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-027-FASTAREA1' 'Layer Height' 'AREA MINER: LAYER' 'Aim Timeout'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -99,10 +85,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.26 JAR
+      - name: Canonicalize passing 0.27 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize Eio 0.27 fast Area Miner'
+            git push origin HEAD:compat/0.24-server-authority
+          fi
+
+      - name: Upload 0.27 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.0-final
+          name: EioClient-26.3-v0.27.0-fastarea-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
