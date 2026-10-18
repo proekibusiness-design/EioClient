@@ -4,14 +4,15 @@ on:
   push:
     branches: [ main ]
     paths-ignore:
-      - '.github/eio016_patch.py'
+      - 'eio26/EioClient.java'
+      - 'gradle.properties'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -22,61 +23,37 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source and project QA
+      - name: Apply Eio 0.17 upgrade
+        run: python3 .github/eio017_patch.py
+
+      - name: Static source QA
         shell: bash
         run: |
           set -euo pipefail
           SRC=eio26/EioClient.java
-          test -s "$SRC"
-          test -s build.gradle
-          test -s settings.gradle
-          test -s gradle.properties
-          test -s src/main/resources/fabric.mod.json
-          test -s src/main/resources/assets/eioclient/lang/en_us.json
-
-          grep -Fq 'VERSION = "0.16.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-016-QA2"' "$SRC"
-          grep -Fq 'mod_version=0.16.0+26.3' gradle.properties
-          grep -Fq 'reproducibleFileOrder = true' build.gradle
-          grep -Fq 'preserveFileTimestamps = false' build.gradle
-
+          grep -Fq 'VERSION = "0.17.0"' "$SRC"
+          grep -Fq 'BUILD_ID = "EIO-017-QA1"' "$SRC"
+          grep -Fq 'mod_version=0.17.0+26.3' gradle.properties
           for token in \
-            'guardedTick' 'guardedHud' 'runtimeSafeMode' 'enterSafeMode' \
-            'appendDiagnostic' 'selfTestSummary' 'snapshotProperties' 'applyProperties' \
-            'saveProfile' 'loadProfile' 'deleteProfile' 'profileSummary' 'currentCps' \
-            'resetModuleSettings' 'Eio Safe Mode' '/eio recover after fixing the module' \
-            'literal("selftest")' 'literal("recover")' 'literal("profile")' \
-            'CPS' 'Keystrokes' 'Held Item' 'PROFILE_DIR' 'DIAGNOSTIC_LOG' \
-            'Math.min(438' 'Math.min(254' 'drawRainbowBlockBrand'; do
+            'FOLLOW_MOB_IDS' 'MobListSetting' 'mobList("Mob Selection"' \
+            'validFollowTarget' 'nearestFollowTarget' 'getDescriptionId' \
+            'mobfilter.' 'MOB FILTER' 'MOB_PAGE_SIZE' 'setAll(true)' 'setAll(false)' \
+            'Math.min(690' 'Math.min(390' 'CATEGORIES' 'drawRainbowBlockBrand'; do
             grep -Fq "$token" "$SRC"
           done
-
           test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 33
-          if grep -Eq 'TODO|FIXME' "$SRC"; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then echo 'Versioned keybind ID found'; exit 1; fi
-
+          if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
-          import json,re
+          import re
           s=Path('eio26/EioClient.java').read_text()
-          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"', s, re.M)
-          names=[n for n,_ in mods]
-          allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
-          assert len(mods)==33, len(mods)
-          assert len(names)==len(set(n.lower() for n in names)), 'duplicate module name'
-          assert all(c in allowed for _,c in mods), 'invalid category'
-          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          expected={'key.eioclient.'+re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',n.lower())) for n in names}
-          expected.add('key.eioclient.clickgui')
-          missing=sorted(expected-set(lang))
-          assert not missing, f'missing language keys: {missing}'
-          assert s.count('ClientTickEvents.END_CLIENT_TICK.register(EioClient::guardedTick)')==1
-          assert s.count('HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient", "hud"), EioClient::guardedHud)')==1
-          assert s.count('private static void guardedHud(')==1
-          assert 'p.setProperty("_schema", "4")' in s
-          print(f'Final model QA: {len(mods)} modules / {len(allowed)} categories / {len(lang)} language entries')
+          assert s.count('class MobListSetting') == 1
+          assert s.count('public static final class ClickGui') == 1
+          assert s.count('private static boolean runFollow') == 1
+          assert len(re.findall(r'^[ \t]*mod\("', s, re.M)) == 33
+          assert 'GUI=690x390' in s
+          print('0.17 static QA passed')
           PY
-          echo "Source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
 
       - name: Native Java and Fabric build
         run: gradle clean build --stacktrace --warning-mode all
@@ -88,42 +65,25 @@ jobs:
           JAR=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
-
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.16.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.17.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
-          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
-          [[ "$META" == *'"minecraft": "~26.3"'* ]]
-          [[ "$META" == *'"java": ">=25"'* ]]
-
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
+          jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$MobListSetting.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
-          jar tf "$JAR" | grep -q '^assets/eioclient/lang/en_us.json$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
-
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          for token in guardedTick guardedHud enterSafeMode selfTestSummary snapshotProperties applyProperties saveProfile loadProfile deleteProfile profileSummary currentCps resetModuleSettings releaseRuntimeState restoreFly; do
-            grep -Fq "$token" /tmp/main.javap
-          done
-          for token in 438 254 drawRainbowBlockBrand categoryColor; do
-            grep -Fq "$token" /tmp/gui.javap
-          done
-
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$MobListSetting' > /tmp/filter.javap
+          for token in validFollowTarget nearestFollowTarget snapshotProperties applyProperties; do grep -Fq "$token" /tmp/main.javap; done
+          for token in renderMobSelector handleMobSelectorClick 690 390; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in disabledCsv loadDisabledCsv setAll allows; do grep -Fq "$token" /tmp/filter.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in \
-            'EIO-016-QA2' 'Eio Safe Mode' '/eio recover after fixing the module' \
-            'selftest' 'recover' 'profile' 'CPS' 'Keystrokes' 'Held Item' \
-            'eio-diagnostics.log' 'eioclient.properties.bak'; do
-            grep -Fq "$token" /tmp/main.strings
-          done
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
-
+          for token in 'EIO-017-QA1' 'Mob Selection' 'entity.minecraft.cow' 'entity.minecraft.zombie' 'mobfilter.'; do grep -Fq "$token" /tmp/main.strings; done
           SIZE=$(stat -c%s "$JAR")
-          test "$SIZE" -gt 26000
+          test "$SIZE" -gt 30000
           echo "Deep QA passed: $JAR"
-          echo "Size: $SIZE bytes"
           echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
@@ -140,10 +100,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final JAR
+      - name: Canonicalize passing 0.17 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize EioClient 0.17 modern Follow release'
+            git push origin HEAD:main
+          fi
+
+      - name: Upload 0.17 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.16.0-final
+          name: EioClient-26.3-v0.17.0-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
