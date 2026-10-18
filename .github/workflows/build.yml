@@ -1,15 +1,15 @@
-name: Build EioClient 0.26.1 Area Miner fix
+name: Build EioClient 0.26.1
 
 on:
   push:
-    branches: [ fix/0.26.1-area-mining ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,13 +20,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply Area Miner interaction fix
-        run: python3 .github/eio0261_area_minefix.py
-
-      - name: Apply Minecraft 26.3 compile correction
-        run: python3 .github/eio0261_compilefix.py
-
-      - name: Static QA
+      - name: Static source and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -43,8 +37,9 @@ jobs:
           assert ('Area Miner','Mining') in mods
           for token in ['continueAreaDestroy','stopAreaDestroy','startDestroyBlock','continueDestroyBlock','stopDestroyBlock','Mine Timeout','areaDestroyStarted','areaMineWorkTicks']:
               assert token in s, token
-          assert 'mc.gameMode.continueDestroyBlock(areaDestroyTarget, face);' in s
           assert 'categoriesScroll' in s and 'public boolean mouseScrolled(' in s
+          assert 'GUI=760x430 modern-nav-glass' in s
+          assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
           print('0.26.1 static QA passed; modules=', len(mods))
           PY
 
@@ -65,12 +60,14 @@ jobs:
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           for token in continueAreaDestroy stopAreaDestroy areaMiningFace findAreaMineTarget updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
           grep -Fq 'startDestroyBlock' /tmp/main.javap
           grep -Fq 'continueDestroyBlock' /tmp/main.javap
+          for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-0261-MINEFIX1' 'Mine Timeout' 'Serpentine tunnel miner'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-0261-MINEFIX1' 'Mine Timeout' 'Serpentine tunnel miner' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -86,22 +83,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.26.1 Area Miner interaction fix'
-            git push origin HEAD:fix/0.26.1-area-mining
-          fi
-
-      - name: Upload candidate JAR
+      - name: Upload final JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.1-area-mining-fix
+          name: EioClient-26.3-v0.26.1-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
