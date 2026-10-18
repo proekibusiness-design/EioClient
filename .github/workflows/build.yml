@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.7.2+26.3
+          mod_version=0.8.0+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -50,11 +50,40 @@ jobs:
           EOF
           python3 - <<'PY'
           import json
-          p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='${version}'; d['name']='Eio Client'; d['description']='Eio Client 26.3 rebuilt input, ClickGUI, modules and subtle branding'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\n')
+          p='src/main/resources/fabric.mod.json'
+          d=json.load(open(p))
+          d['version']='${version}'
+          d['name']='Eio Client'
+          d['description']='Eio Client 26.3 with ClickGUI, configurable modules, HUD, waypoints and QoL utilities'
+          d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}
+          open(p,'w').write(json.dumps(d,indent=2)+'\n')
           PY
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
+          mkdir -p src/main/resources/assets/eioclient/lang
+          cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
+          {
+            "key.category.eioclient.general": "Eio Client",
+            "key.eioclient.kill_aura": "Kill Aura",
+            "key.eioclient.auto_clicker": "Auto Clicker",
+            "key.eioclient.sprint": "Sprint",
+            "key.eioclient.autowalk": "Auto Walk",
+            "key.eioclient.fly": "Fly",
+            "key.eioclient.safewalk": "Safe Walk",
+            "key.eioclient.auto_respawn": "Auto Respawn",
+            "key.eioclient.inventory_info": "Inventory Info",
+            "key.eioclient.durability_hud": "Durability HUD",
+            "key.eioclient.coordinates": "Coordinates",
+            "key.eioclient.fps": "FPS",
+            "key.eioclient.active_modules": "Active Modules",
+            "key.eioclient.fullbright": "Fullbright",
+            "key.eioclient.chunk_info": "Chunk Info",
+            "key.eioclient.waypoints": "Waypoints",
+            "key.eioclient.session_info": "Session Info",
+            "key.eioclient.notifications": "Notifications"
+          }
+          EOF
       - name: Build
         working-directory: extracted/eioclient
         run: gradle build --stacktrace
@@ -62,7 +91,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.7.2
+          name: EioClient-26.3-v0.8.0
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
