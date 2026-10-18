@@ -2,12 +2,10 @@ package com.eio.client;
 
 import net.minecraft.core.BlockPos;
 
-/**
- * Immutable horizontal quarry bounds plus a top-down mining depth.
- * Kept separate from client input code so region math can be regression tested.
- */
+/** Immutable horizontal quarry bounds plus staged top-down mining depth. */
 final class AreaRegion {
     static final int MAX_SIDE = 128;
+    static final int STAGE_DEPTH = 5;
 
     final int minX;
     final int maxX;
@@ -38,6 +36,16 @@ final class AreaRegion {
     int width() { return maxX - minX + 1; }
     int length() { return maxZ - minZ + 1; }
     int depth() { return topY - bottomY + 1; }
+    int stageCount() { return (depth() + STAGE_DEPTH - 1) / STAGE_DEPTH; }
+
+    int stageTopY(int stage) {
+        int safe = Math.max(0, Math.min(stageCount() - 1, stage));
+        return topY - safe * STAGE_DEPTH;
+    }
+
+    int stageBottomY(int stage) {
+        return Math.max(bottomY, stageTopY(stage) - STAGE_DEPTH + 1);
+    }
 
     boolean supportedSize() {
         return width() > 0 && length() > 0 && width() <= MAX_SIDE && length() <= MAX_SIDE;
@@ -53,6 +61,11 @@ final class AreaRegion {
                 && pos.getX() >= minX && pos.getX() <= maxX
                 && pos.getZ() >= minZ && pos.getZ() <= maxZ
                 && pos.getY() >= bottomY && pos.getY() <= topY;
+    }
+
+    boolean containsStage(BlockPos pos, int stage) {
+        return contains(pos) && stage >= 0 && stage < stageCount()
+                && pos.getY() <= stageTopY(stage) && pos.getY() >= stageBottomY(stage);
     }
 
     int clampX(double x) { return Math.max(minX, Math.min(maxX, (int) Math.floor(x))); }

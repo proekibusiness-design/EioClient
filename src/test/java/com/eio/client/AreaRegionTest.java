@@ -41,6 +41,21 @@ final class AreaRegionTest {
     }
 
     @Test
+    void splitsDepthIntoFiveBlockStages() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 12);
+        assertEquals(3, r.stageCount());
+        assertEquals(70, r.stageTopY(0));
+        assertEquals(66, r.stageBottomY(0));
+        assertEquals(65, r.stageTopY(1));
+        assertEquals(61, r.stageBottomY(1));
+        assertEquals(60, r.stageTopY(2));
+        assertEquals(59, r.stageBottomY(2));
+        assertTrue(r.containsStage(new BlockPos(1, 67, 1), 0));
+        assertFalse(r.containsStage(new BlockPos(1, 65, 1), 0));
+        assertTrue(r.containsStage(new BlockPos(1, 65, 1), 1));
+    }
+
+    @Test
     void rejectsOversizedNavigationArea() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(AreaRegion.MAX_SIDE, 64, 0), 1);
         assertNotNull(r);

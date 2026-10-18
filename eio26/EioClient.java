@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.26.0";
-    public static final String BUILD_ID = "EIO-026-AREA1";
+    public static final String VERSION = "0.27.0";
+    public static final String BUILD_ID = "EIO-027-STAGE1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -70,6 +70,7 @@ public final class EioClient implements ClientModInitializer {
     private static int areaMineRearmTicks;
     private static int areaMineAimTicks;
     private static int areaNavIndex;
+    private static int areaStageIndex;
     private static int areaMoveTicks;
     private static int areaMinedThisPass;
     private static boolean areaMoveRequested;
@@ -245,18 +246,18 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Exposed Only", true, "Only target blocks with at least one exposed face.")
                 .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the active Nuker target.");
-        mod("Area Miner", "Mining", "Mines a user-defined rectangular area to a chosen depth and can move through the selected coordinates.", -1)
+        mod("Area Miner", "Mining", "Clears a selected rectangle in serpentine tunnel lanes, finishing each 5-block-deep stage before descending to the next one.", -1)
                 .point("Corner A", "Stand at the first horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .point("Corner B", "Stand at the opposite horizontal corner and left-click this row to set it here. Right-click clears it.")
-                .num("Depth", 8.0, 1.0, 64.0, 1.0, "Number of blocks to mine downward from the higher corner Y level.")
+                .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth below the surface. Area Miner processes this in fixed 5-block stages.")
                 .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next area target.")
                 .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to line up with a target before temporarily skipping it.")
-                .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
-                .bool("Auto Move", true, "Move through the configured rectangle when no mineable block is currently in normal interaction range.")
-                .bool("Sprint", false, "Sprint while Area Miner is navigating between cells.")
+                .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one serpentine navigation cell before moving to the next cell.")
+                .bool("Auto Move", true, "Move through each lane of the configured rectangle after clearing the blocks immediately ahead.")
+                .bool("Sprint", false, "Sprint while Area Miner is navigating through a cleared lane.")
                 .bool("Auto Jump", true, "Jump over simple one-block obstacles while Area Miner is moving.")
-                .bool("Exposed Only", true, "Mine only blocks with an air-adjacent face, exposing deeper layers progressively.")
-                .bool("Face Block", true, "Turn your view toward the current Area Miner target.");
+                .bool("Exposed Only", true, "Mine only exposed blocks; each 5-block stage is revisited until it is completely clear.")
+                .bool("Face Block", true, "Turn your view toward the current straight-ahead Area Miner target.");
         mod("Tool Saver", "Mining", "Stops Eio mining automation before the held damageable tool reaches the configured remaining durability.", -1)
                 .num("Remaining", 12.0, 1.0, 100.0, 1.0, "Minimum durability to keep in reserve.")
                 .bool("Notify", true, "Show a warning when mining pauses to protect the tool.");
@@ -592,7 +593,6 @@ public final class EioClient implements ClientModInitializer {
                 else if (setting instanceof NumSetting n) n.set(n.defaultValue);
                 else if (setting instanceof MobListSetting ml) ml.reset();
             else if (setting instanceof PointSetting point) point.reset();
-                else if (setting instanceof PointSetting point) point.reset();
                 if (setting instanceof MobListSetting ml) {
                     ml.loadDisabledCsv(p.getProperty("mobfilter." + m.name + "." + setting.name, ""));
                     continue;
@@ -1154,7 +1154,11 @@ public final class EioClient implements ClientModInitializer {
         AreaRegion region = areaRegion(area);
         if (region == null) return "Area Miner: set Corner A and Corner B";
         if (!region.supportedSize()) return "Area Miner: maximum supported area is " + AreaRegion.MAX_SIDE + "x" + AreaRegion.MAX_SIDE;
-        return "Area Miner: " + region.summary() + (areaComplete ? " | complete" : " | nav " + (areaNavIndex + 1) + "/" + region.navigationCells());
+        int stage = Math.max(0, Math.min(areaStageIndex, region.stageCount() - 1));
+        String stageText = "stage " + (stage + 1) + "/" + region.stageCount()
+                + " Y " + region.stageTopY(stage) + ".." + region.stageBottomY(stage);
+        return "Area Miner: " + region.summary() + " | " + stageText
+                + (areaComplete ? " | complete" : " | lane " + (Math.min(areaNavIndex, Math.max(0, region.navigationCells() - 1)) + 1) + "/" + region.navigationCells());
     }
 
     private static void resetAreaRuntime() {
@@ -1162,6 +1166,7 @@ public final class EioClient implements ClientModInitializer {
         areaMineRearmTicks = 0;
         areaMineAimTicks = 0;
         areaNavIndex = 0;
+        areaStageIndex = 0;
         areaMoveTicks = 0;
         areaMinedThisPass = 0;
         areaMoveRequested = false;
@@ -1172,7 +1177,7 @@ public final class EioClient implements ClientModInitializer {
     private static boolean validAreaMineTarget(Minecraft mc, Mod area, BlockPos pos) {
         if (mc.player == null || mc.level == null || pos == null) return false;
         AreaRegion region = areaRegion(area);
-        if (region == null || !region.supportedSize() || !region.contains(pos)) return false;
+        if (region == null || !region.supportedSize() || !region.containsStage(pos, areaStageIndex)) return false;
         if (!withinVanillaBlockRange(mc, pos)) return false;
         var state = mc.level.getBlockState(pos);
         if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
@@ -1182,29 +1187,82 @@ public final class EioClient implements ClientModInitializer {
     private static BlockPos findAreaMineTarget(Minecraft mc, Mod area) {
         if (mc.player == null || mc.level == null) return null;
         AreaRegion region = areaRegion(area);
-        if (region == null || !region.supportedSize()) return null;
-        BlockPos origin = mc.player.blockPosition();
-        int radius = 6;
+        if (region == null || !region.supportedSize() || areaStageIndex >= region.stageCount()) return null;
+        int cells = region.navigationCells();
+        if (cells <= 0) return null;
+        int baseIndex = Math.max(0, Math.min(areaNavIndex, cells - 1));
         BlockPos best = null;
-        double bestSq = Double.MAX_VALUE;
-        for (int dy = -radius; dy <= radius; dy++) {
-            for (int dx = -radius; dx <= radius; dx++) {
-                for (int dz = -radius; dz <= radius; dz++) {
-                    BlockPos pos = origin.offset(dx, dy, dz);
-                    if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
-                    double px = pos.getX() + 0.5 - mc.player.getX();
-                    double py = pos.getY() + 0.5 - mc.player.getY();
-                    double pz = pos.getZ() + 0.5 - mc.player.getZ();
-                    double d = px * px + py * py + pz * pz;
-                    if (d < bestSq) { bestSq = d; best = pos.immutable(); }
-                }
+        double bestScore = Double.MAX_VALUE;
+        int lookAhead = Math.min(3, cells - baseIndex);
+        for (int step = 0; step < lookAhead; step++) {
+            BlockPos lane = region.navigationCell(baseIndex + step, mc.player.blockPosition().getY());
+            if (lane == null) continue;
+            for (int y = region.stageTopY(areaStageIndex); y >= region.stageBottomY(areaStageIndex); y--) {
+                BlockPos pos = new BlockPos(lane.getX(), y, lane.getZ());
+                if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
+                double dx = pos.getX() + 0.5 - mc.player.getX();
+                double dy = pos.getY() + 0.5 - mc.player.getEyeY();
+                double dz = pos.getZ() + 0.5 - mc.player.getZ();
+                double score = step * 1000.0 + dx * dx + dy * dy + dz * dz;
+                if (score < bestScore) { bestScore = score; best = pos.immutable(); }
             }
         }
         return best;
     }
 
+    private static boolean areaStageHasBlocks(Minecraft mc, Mod area, AreaRegion region, int stage) {
+        if (mc.level == null || region == null || stage < 0 || stage >= region.stageCount()) return false;
+        for (int y = region.stageTopY(stage); y >= region.stageBottomY(stage); y--) {
+            for (int z = region.minZ; z <= region.maxZ; z++) {
+                for (int x = region.minX; x <= region.maxX; x++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    var state = mc.level.getBlockState(pos);
+                    if (!state.isAir() && state.getDestroySpeed(mc.level, pos) >= 0.0f) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean advanceAreaStageIfReady(Minecraft mc, Mod area, AreaRegion region) {
+        if (areaNavIndex < region.navigationCells()) return false;
+        if (areaMinedThisPass > 0) {
+            areaNavIndex = 0;
+            areaMinedThisPass = 0;
+            areaMoveTicks = 0;
+            AREA_MINE_SKIPPED.clear();
+            return true;
+        }
+        if (areaStageHasBlocks(mc, area, region, areaStageIndex)) {
+            area.enabled = false;
+            save();
+            notifyMessage("AREA MINER PAUSED: STAGE " + (areaStageIndex + 1) + " HAS UNREACHABLE BLOCKS", 0xFFFFB36B, 4200L);
+            appendDiagnostic("AREA_MINER stalled stage=" + (areaStageIndex + 1));
+            return true;
+        }
+        areaStageIndex++;
+        areaNavIndex = 0;
+        areaMoveTicks = 0;
+        areaMinedThisPass = 0;
+        areaMineTarget = null;
+        areaMineAimTicks = 0;
+        areaMineRearmTicks = 1;
+        AREA_MINE_SKIPPED.clear();
+        if (areaStageIndex >= region.stageCount()) {
+            areaComplete = true;
+            area.enabled = false;
+            save();
+            notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3200L);
+            return true;
+        }
+        notifyMessage("AREA MINER: STARTING STAGE " + (areaStageIndex + 1) + "/" + region.stageCount(), 0xFF74C8F0, 2200L);
+        return true;
+    }
+
     private static boolean updateAreaNavigation(Minecraft mc, Mod area) {
         if (mc.player == null || mc.level == null || !areaConfigured(area) || areaComplete) return false;
+        AreaRegion region = areaRegion(area);
+        if (region == null || areaStageIndex >= region.stageCount()) return false;
         if (areaMineTarget != null || areaMineRearmTicks > 0) { areaMoveTicks = 0; return false; }
         BlockPos reachable = findAreaMineTarget(mc, area);
         if (reachable != null) {
@@ -1213,8 +1271,6 @@ public final class EioClient implements ClientModInitializer {
             areaMoveTicks = 0;
             return false;
         }
-        AreaRegion region = areaRegion(area);
-        if (region == null) return false;
 
         double px = mc.player.getX(), pz = mc.player.getZ();
         boolean outside = px < region.minX + 0.15 || px > region.maxX + 0.85
@@ -1224,20 +1280,7 @@ public final class EioClient implements ClientModInitializer {
             goalX = region.clampX(px) + 0.5;
             goalZ = region.clampZ(pz) + 0.5;
         } else {
-            int cells = region.navigationCells();
-            if (cells <= 0) return false;
-            if (areaNavIndex >= cells) {
-                if (areaMinedThisPass <= 0) {
-                    areaComplete = true;
-                    area.enabled = false;
-                    save();
-                    notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3000L);
-                    return false;
-                }
-                areaNavIndex = 0;
-                areaMinedThisPass = 0;
-                AREA_MINE_SKIPPED.clear();
-            }
+            if (advanceAreaStageIfReady(mc, area, region)) return false;
             BlockPos nav = region.navigationCell(areaNavIndex, mc.player.blockPosition().getY());
             if (nav == null) return false;
             goalX = nav.getX() + 0.5;
@@ -1641,6 +1684,7 @@ public final class EioClient implements ClientModInitializer {
             if (setting instanceof BoolSetting b) b.value = b.defaultValue;
             else if (setting instanceof NumSetting n) n.set(n.defaultValue);
             else if (setting instanceof MobListSetting ml) ml.reset();
+            else if (setting instanceof PointSetting point) point.reset();
         }
     }
 
