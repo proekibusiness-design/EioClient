@@ -27,7 +27,6 @@
   "key.eioclient.fullbright": "Fullbright",
   "key.eioclient.chunk_info": "Chunk Info",
   "key.eioclient.waypoints": "Waypoints",
-  "key.eioclient.test_profile": "Test Profile",
   "key.eioclient.session_info": "Session Info",
   "key.eioclient.session_timer": "Session Timer",
   "key.eioclient.notifications": "Notifications",
@@ -35,5 +34,13 @@
   "key.eioclient.keystrokes": "Keystrokes",
   "key.eioclient.held_item": "Held Item",
   "key.eioclient.reach": "Reach",
-  "key.eioclient.creative_assist": "Creative Assist"
+  "key.eioclient.creative_assist": "Creative Assist",
+  "key.eioclient.target_lock": "Target Lock",
+  "key.eioclient.trigger_bot": "Trigger Bot",
+  "key.eioclient.combat_sprint": "Combat Sprint",
+  "key.eioclient.auto_mine": "Auto Mine",
+  "key.eioclient.tunnel_miner": "Tunnel Miner",
+  "key.eioclient.chunk_miner": "Chunk Miner",
+  "key.eioclient.tool_saver": "Tool Saver",
+  "key.eioclient.mining_hud": "Mining HUD"
 }

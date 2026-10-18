@@ -18,6 +18,8 @@ import net.minecraft.client.gui.screens.options.controls.KeyBindsScreen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
@@ -26,6 +28,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
 
 import java.awt.Color;
@@ -37,13 +40,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.20.0";
-    public static final String BUILD_ID = "EIO-020-QA1";
+    public static final String VERSION = "0.21.0";
+    public static final String BUILD_ID = "EIO-021-QA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
     private static final Path DIAGNOSTIC_LOG = FabricLoader.getInstance().getConfigDir().resolve("eio-diagnostics.log");
-    private static final Path TEST_LOG = FabricLoader.getInstance().getConfigDir().resolve("eio-test-session.log");
     private static final List<Mod> MODS = new ArrayList<>();
     private static final Map<String, Mod> MOD_INDEX = new LinkedHashMap<>();
     private static final Map<String, Waypoint> WAYPOINTS = new LinkedHashMap<>();
@@ -52,10 +54,11 @@ public final class EioClient implements ClientModInitializer {
     private static boolean guiOpen;
     private static double clickAccumulator;
     private static int auraCooldown;
-    private static int testAttackCooldown;
-    private static int testCycleTicks;
-    private static int testJumpTicks;
-    private static int testPhase;
+    private static int triggerCooldown;
+    private static Entity combatTarget;
+    private static BlockPos chunkMineTarget;
+    private static boolean attackForced;
+    private static boolean toolSaverWarned;
     private static MobEffectInstance fullbrightInjected;
     private static String notificationText = "";
     private static long notificationUntil;
@@ -125,6 +128,29 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Invisible", false, "Include invisible living entities in Reach display targeting.")
                 .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Reach may display as targets.");
 
+        mod("Target Lock", "Combat", "Tracks one allowed target and can keep your view centered on it without attacking automatically.", -1)
+                .num("Range", 6.0, 2.0, 10.0, 0.25, "Maximum lock distance.")
+                .num("FOV", 120.0, 20.0, 360.0, 10.0, "Target acquisition field of view.")
+                .bool("Face Target", true, "Continuously face the locked target.")
+                .bool("Players", true, "Allow player targets.")
+                .bool("Mobs", true, "Allow non-player living targets.")
+                .bool("Invisible", false, "Allow invisible targets.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Target Lock may select.");
+        mod("Trigger Bot", "Combat", "Attacks an allowed living entity only while your crosshair is directly over it.", -1)
+                .num("Range", 4.5, 1.0, 6.0, 0.25, "Maximum direct-crosshair attack distance.")
+                .num("Delay", 5.0, 1.0, 20.0, 1.0, "Ticks between trigger attacks.")
+                .bool("Players", true, "Allow player targets.")
+                .bool("Mobs", true, "Allow non-player living targets.")
+                .bool("Invisible", false, "Allow invisible targets.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Trigger Bot may attack.");
+        mod("Combat Sprint", "Combat", "Automatically sprints while an allowed target is nearby and inside the configured view cone.", -1)
+                .num("Range", 8.0, 2.0, 12.0, 0.5, "Target detection range used to activate sprinting.")
+                .num("FOV", 180.0, 30.0, 360.0, 15.0, "Target detection field of view.")
+                .bool("Players", true, "Allow player targets.")
+                .bool("Mobs", true, "Allow non-player living targets.")
+                .bool("Invisible", false, "Allow invisible targets.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Combat Sprint may react to.");
+
         mod("Sprint", "Movement", "Automatically sprints while moving forward.", InputConstants.KEY_R)
                 .bool("Hunger Check", true, "Only sprint when your food level is high enough.");
         mod("AutoWalk", "Movement", "Keeps moving forward until disabled.", InputConstants.KEY_G);
@@ -172,13 +198,24 @@ public final class EioClient implements ClientModInitializer {
         mod("Chunk Info", "World", "Shows your current chunk coordinates.", -1);
         mod("Waypoints", "World", "Shows your nearest saved waypoint and distance.", -1);
 
-        mod("Test Profile", "Testing", "Runs obvious, repeatable stress patterns for private anti-cheat evaluation and writes a local test-session log.", -1)
-                .num("Level", 1.0, 1.0, 5.0, 1.0, "Stress level. Higher levels use faster fixed combat timing and larger rotation snaps.")
-                .num("Cycle Seconds", 4.0, 2.0, 12.0, 1.0, "How often the test profile advances or emits a test event.")
-                .bool("Auto Sweep", true, "Cycle levels 1 through 5 automatically.")
-                .bool("Combat", true, "Generate fixed-rate attack attempts against a nearby valid target.")
-                .bool("Movement", true, "Generate an obvious jump pulse during each test cycle.")
-                .bool("Rotation", true, "Generate a fixed-angle view snap during each test cycle.");
+        mod("Auto Mine", "Mining", "Keeps normal mining input held while your crosshair is on a block.", -1)
+                .bool("Stop In GUI", true, "Release mining input while Eio's ClickGUI is open.");
+        mod("Tunnel Miner", "Mining", "Straight-line tunneling helper that can hold forward and mine continuously.", -1)
+                .bool("Auto Walk", true, "Hold forward while tunneling.")
+                .bool("Sprint", false, "Sprint while moving through the tunnel.")
+                .bool("Pause On Entity", true, "Do not hold mining input while an entity is directly under your crosshair.");
+        mod("Chunk Miner", "Mining", "Automatically selects nearby exposed breakable blocks inside your current chunk and mines them using normal input.", -1)
+                .num("Radius", 4.0, 2.0, 5.0, 0.5, "Local block scan radius. Server interaction range still applies.")
+                .num("Vertical", 2.0, 1.0, 4.0, 1.0, "Vertical scan distance above and below you.")
+                .bool("Exposed Only", true, "Only choose blocks with at least one air-adjacent face.")
+                .bool("Avoid Below", true, "Avoid selecting blocks below your feet.")
+                .bool("Face Block", true, "Turn your view toward the selected chunk-mining block.");
+        mod("Tool Saver", "Mining", "Stops Eio mining automation before the held damageable tool reaches the configured remaining durability.", -1)
+                .num("Remaining", 12.0, 1.0, 100.0, 1.0, "Minimum durability to keep in reserve.")
+                .bool("Notify", true, "Show a warning when mining pauses to protect the tool.");
+        mod("Mining HUD", "Mining", "Shows the current automatic mining target and held-tool durability.", -1)
+                .bool("Target", true, "Show the current Chunk Miner target coordinates.")
+                .bool("Tool", true, "Show remaining durability for the selected tool.");
 
         mod("Session Info", "Misc", "Shows Eio and Minecraft versions on the HUD.", -1)
                 .bool("Build ID", false, "Also show the exact Eio QA build identifier.");
@@ -314,19 +351,6 @@ public final class EioClient implements ClientModInitializer {
                             c.getSource().sendFeedback(Component.literal("Follow target cleared"));
                             return 1;
                         }))
-                        .then(ClientCommands.literal("test")
-                                .then(ClientCommands.literal("status").executes(c -> {
-                                    Mod t = find("Test Profile");
-                                    c.getSource().sendFeedback(Component.literal("Test Profile " + (t.enabled ? "ON" : "OFF") + " level " + (int) t.num("Level").value));
-                                    return 1;
-                                }))
-                                .then(ClientCommands.literal("mark")
-                                        .then(ClientCommands.argument("note", StringArgumentType.greedyString()).executes(c -> {
-                                            String note = StringArgumentType.getString(c, "note");
-                                            appendTestLog("MARK " + note);
-                                            c.getSource().sendFeedback(Component.literal("Test marker written"));
-                                            return 1;
-                                        }))))
                         .then(ClientCommands.literal("waypoint")
                                 .then(ClientCommands.literal("add")
                                         .then(ClientCommands.argument("name", StringArgumentType.greedyString()).executes(c -> {
@@ -578,11 +602,17 @@ public final class EioClient implements ClientModInitializer {
         Mod lowHealth = find("Low Health Alert");
         Mod clicker = find("Auto Clicker");
         Mod aura = find("Kill Aura");
+        Mod targetLock = find("Target Lock");
+        Mod trigger = find("Trigger Bot");
+        Mod combatSprint = find("Combat Sprint");
+        Mod autoMine = find("Auto Mine");
+        Mod tunnelMiner = find("Tunnel Miner");
+        Mod chunkMiner = find("Chunk Miner");
         Mod bright = find("Fullbright");
-        Mod test = find("Test Profile");
 
         boolean shouldForceForward = walk.enabled;
         if (follow.enabled) shouldForceForward |= runFollow(mc, follow);
+        if (tunnelMiner.enabled && tunnelMiner.bool("Auto Walk").value) shouldForceForward = true;
         if (shouldForceForward) {
             mc.options.keyUp.setDown(true);
             forwardForced = true;
@@ -594,6 +624,9 @@ public final class EioClient implements ClientModInitializer {
         if (sprint.enabled && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
             boolean hungerOk = !sprint.bool("Hunger Check").value || mc.player.getFoodData().getFoodLevel() > 6;
             if (hungerOk) mc.player.setSprinting(true);
+        }
+        if (tunnelMiner.enabled && tunnelMiner.bool("Sprint").value && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
+            mc.player.setSprinting(true);
         }
         boolean movingForSafeWalk = mc.options.keyUp.isDown() || mc.options.keyDown.isDown()
                 || mc.options.keyLeft.isDown() || mc.options.keyRight.isDown();
@@ -658,6 +691,60 @@ public final class EioClient implements ClientModInitializer {
             lowHealthCooldown = 0;
         }
 
+        if (targetLock.enabled) {
+            double lockRange = targetLock.num("Range").value;
+            double lockFov = targetLock.num("FOV").value;
+            if (!validConfiguredTarget(mc, targetLock, combatTarget, lockRange, lockFov)) {
+                combatTarget = nearestTarget(mc, targetLock, lockRange, lockFov);
+            }
+            if (combatTarget != null && targetLock.bool("Face Target").value) faceEntity(mc.player, combatTarget);
+        } else combatTarget = null;
+
+        if (trigger.enabled) {
+            if (triggerCooldown > 0) triggerCooldown--;
+            if (triggerCooldown <= 0 && mc.hitResult instanceof EntityHitResult hit) {
+                Entity t = hit.getEntity();
+                double r = trigger.num("Range").value;
+                if (validModuleTarget(trigger, t) && mc.player.distanceToSqr(t) <= r * r) {
+                    attack(mc, t);
+                    triggerCooldown = Math.max(1, (int) Math.round(trigger.num("Delay").value));
+                }
+            }
+        } else triggerCooldown = 0;
+
+        if (combatSprint.enabled && !mc.player.horizontalCollision) {
+            Entity t = nearestTarget(mc, combatSprint, combatSprint.num("Range").value, combatSprint.num("FOV").value);
+            if (t != null) mc.player.setSprinting(true);
+        }
+
+        boolean miningAllowed = miningToolSafe(mc);
+        boolean shouldForceAttack = false;
+        if (miningAllowed) {
+            if (chunkMiner.enabled) {
+                if (!validChunkMineTarget(mc, chunkMiner, chunkMineTarget)) {
+                    chunkMineTarget = findChunkMineTarget(mc, chunkMiner);
+                }
+                if (chunkMineTarget != null) {
+                    if (chunkMiner.bool("Face Block").value) faceBlock(mc.player, chunkMineTarget);
+                    shouldForceAttack = true;
+                }
+            } else chunkMineTarget = null;
+
+            if (autoMine.enabled && (!autoMine.bool("Stop In GUI").value || !guiOpen)
+                    && mc.hitResult instanceof BlockHitResult) shouldForceAttack = true;
+            if (tunnelMiner.enabled && (!tunnelMiner.bool("Pause On Entity").value || !(mc.hitResult instanceof EntityHitResult))) {
+                shouldForceAttack = true;
+            }
+        } else chunkMineTarget = null;
+
+        if (shouldForceAttack) {
+            mc.options.keyAttack.setDown(true);
+            attackForced = true;
+        } else if (attackForced) {
+            mc.options.keyAttack.setDown(false);
+            attackForced = false;
+        }
+
         boolean clickAllowed = !clicker.bool("Require Attack").value || mc.options.keyAttack.isDown();
         if (clicker.enabled && clickAllowed) {
             double cps = Math.max(1.0, Math.min(20.0, clicker.num("CPS").value));
@@ -683,15 +770,8 @@ public final class EioClient implements ClientModInitializer {
             }
         } else auraCooldown = 0;
 
-        if (test.enabled) runTestProfile(mc, test);
-        else {
-            testAttackCooldown = 0;
-            testCycleTicks = 0;
-            testJumpTicks = 0;
-        }
         boolean shouldForceJump = (autoJump.enabled && mc.player.horizontalCollision && mc.player.onGround())
-                || (autoSwim.enabled && mc.player.isInWater())
-                || (test.enabled && testJumpTicks > 0);
+                || (autoSwim.enabled && mc.player.isInWater());
         if (shouldForceJump) {
             mc.options.keyJump.setDown(true);
             jumpForced = true;
@@ -699,9 +779,104 @@ public final class EioClient implements ClientModInitializer {
             mc.options.keyJump.setDown(false);
             jumpForced = false;
         }
-        if (testJumpTicks > 0) testJumpTicks--;
 
         if (bright.enabled) maintainFullbright(mc); else clearFullbright(mc);
+    }
+
+    private static boolean validConfiguredTarget(Minecraft mc, Mod selector, Entity target, double range, double fov) {
+        if (mc.player == null || target == null || !validModuleTarget(selector, target)) return false;
+        if (mc.player.distanceToSqr(target) > range * range) return false;
+        return fov >= 359.9 || angleFromView(mc.player, target) <= fov / 2.0;
+    }
+
+    private static void faceEntity(Player player, Entity target) {
+        double dx = target.getX() - player.getX();
+        double dz = target.getZ() - player.getZ();
+        double dy = target.getY() + target.getBbHeight() * 0.5 - player.getEyeY();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
+        player.setXRot((float) (-Math.toDegrees(Math.atan2(dy, Math.max(0.001, horizontal)))));
+    }
+
+    private static boolean miningToolSafe(Minecraft mc) {
+        Mod saver = find("Tool Saver");
+        if (saver == null || !saver.enabled || mc.player == null) {
+            toolSaverWarned = false;
+            return true;
+        }
+        ItemStack held = mc.player.getInventory().getSelectedItem();
+        if (held.isEmpty() || !held.isDamageableItem()) {
+            toolSaverWarned = false;
+            return true;
+        }
+        int remaining = held.getMaxDamage() - held.getDamageValue();
+        int reserve = (int) Math.round(saver.num("Remaining").value);
+        if (remaining <= reserve) {
+            if (!toolSaverWarned && saver.bool("Notify").value) {
+                notifyMessage("TOOL SAVER: MINING PAUSED (" + remaining + " LEFT)", 0xFFFFC875, 2600L);
+            }
+            toolSaverWarned = true;
+            return false;
+        }
+        toolSaverWarned = false;
+        return true;
+    }
+
+    private static boolean validChunkMineTarget(Minecraft mc, Mod chunk, BlockPos pos) {
+        if (mc.player == null || mc.level == null || pos == null) return false;
+        BlockPos origin = mc.player.blockPosition();
+        if ((pos.getX() >> 4) != (origin.getX() >> 4) || (pos.getZ() >> 4) != (origin.getZ() >> 4)) return false;
+        int vertical = (int) Math.round(chunk.num("Vertical").value);
+        if (Math.abs(pos.getY() - origin.getY()) > vertical) return false;
+        if (chunk.bool("Avoid Below").value && pos.getY() < (int) Math.floor(mc.player.getY())) return false;
+        double dx = pos.getX() + 0.5 - mc.player.getX();
+        double dy = pos.getY() + 0.5 - mc.player.getY();
+        double dz = pos.getZ() + 0.5 - mc.player.getZ();
+        double r = chunk.num("Radius").value;
+        if (dx * dx + dy * dy + dz * dz > r * r) return false;
+        var state = mc.level.getBlockState(pos);
+        if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
+        if (chunk.bool("Exposed Only").value && !isExposedBlock(mc, pos)) return false;
+        return true;
+    }
+
+    private static boolean isExposedBlock(Minecraft mc, BlockPos pos) {
+        for (Direction direction : Direction.values()) {
+            if (mc.level.getBlockState(pos.relative(direction)).isAir()) return true;
+        }
+        return false;
+    }
+
+    private static BlockPos findChunkMineTarget(Minecraft mc, Mod chunk) {
+        if (mc.player == null || mc.level == null) return null;
+        BlockPos origin = mc.player.blockPosition();
+        int radius = (int) Math.ceil(chunk.num("Radius").value);
+        int vertical = (int) Math.round(chunk.num("Vertical").value);
+        BlockPos best = null;
+        double bestSq = Double.MAX_VALUE;
+        for (int dy = -vertical; dy <= vertical; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    BlockPos pos = origin.offset(dx, dy, dz);
+                    if (!validChunkMineTarget(mc, chunk, pos)) continue;
+                    double px = pos.getX() + 0.5 - mc.player.getX();
+                    double py = pos.getY() + 0.5 - mc.player.getY();
+                    double pz = pos.getZ() + 0.5 - mc.player.getZ();
+                    double d = px * px + py * py + pz * pz;
+                    if (d < bestSq) { bestSq = d; best = pos.immutable(); }
+                }
+            }
+        }
+        return best;
+    }
+
+    private static void faceBlock(Player player, BlockPos pos) {
+        double dx = pos.getX() + 0.5 - player.getX();
+        double dz = pos.getZ() + 0.5 - player.getZ();
+        double dy = pos.getY() + 0.5 - player.getEyeY();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        player.setYRot((float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0));
+        player.setXRot((float) (-Math.toDegrees(Math.atan2(dy, Math.max(0.001, horizontal)))));
     }
 
     private static boolean validClickTarget(Minecraft mc, Mod clicker, Entity target) {
@@ -813,39 +988,6 @@ public final class EioClient implements ClientModInitializer {
         return advance;
     }
 
-    private static void runTestProfile(Minecraft mc, Mod test) {
-        if (mc.player == null) return;
-        int cycle = Math.max(40, (int) Math.round(test.num("Cycle Seconds").value * 20.0));
-        if (++testCycleTicks >= cycle) {
-            testCycleTicks = 0;
-            if (test.bool("Auto Sweep").value) {
-                testPhase = (testPhase % 5) + 1;
-                test.num("Level").set(testPhase);
-            }
-            int level = (int) Math.round(test.num("Level").value);
-            if (test.bool("Movement").value) testJumpTicks = 2;
-            if (test.bool("Rotation").value) mc.player.setYRot(mc.player.getYRot() + 15.0f * level);
-            appendTestLog("PROFILE level=" + level + " combat=" + test.bool("Combat").value
-                    + " movement=" + test.bool("Movement").value + " rotation=" + test.bool("Rotation").value
-                    + " xyz=" + String.format(Locale.ROOT, "%.1f,%.1f,%.1f", mc.player.getX(), mc.player.getY(), mc.player.getZ()));
-        }
-        if (test.bool("Combat").value) {
-            int level = (int) Math.round(test.num("Level").value);
-            if (testAttackCooldown-- <= 0) {
-                testAttackCooldown = Math.max(1, 6 - level);
-                Entity t = nearestTarget(mc, 5.5, 360.0, true, true, true);
-                if (t != null) attack(mc, t);
-            }
-        } else testAttackCooldown = 0;
-    }
-
-    private static void appendTestLog(String line) {
-        try {
-            Files.createDirectories(TEST_LOG.getParent());
-            Files.writeString(TEST_LOG, Instant.now() + " " + line + System.lineSeparator(),
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-        } catch (Exception ignored) {}
-    }
 
     private static void maintainFullbright(Minecraft mc) {
         if (mc.player == null) return;
@@ -869,8 +1011,9 @@ public final class EioClient implements ClientModInitializer {
         m.enabled = !m.enabled;
         Minecraft mc = Minecraft.getInstance();
         if (!m.enabled && mc.player != null) {
-            if ((m.name.equals("AutoWalk") || m.name.equals("Follow"))
-                    && !find("AutoWalk").enabled && !find("Follow").enabled && forwardForced) {
+            if ((m.name.equals("AutoWalk") || m.name.equals("Follow") || m.name.equals("Tunnel Miner"))
+                    && !find("AutoWalk").enabled && !find("Follow").enabled
+                    && !find("Tunnel Miner").enabled && forwardForced) {
                 mc.options.keyUp.setDown(false);
                 forwardForced = false;
             }
@@ -884,9 +1027,14 @@ public final class EioClient implements ClientModInitializer {
                 lowHealthCooldown = 0;
             }
             if (m.name.equals("Fullbright")) clearFullbright(mc);
-            if (m.name.equals("Test Profile")) appendTestLog("SESSION STOP");
+            if ((m.name.equals("Auto Mine") || m.name.equals("Tunnel Miner") || m.name.equals("Chunk Miner"))
+                    && !find("Auto Mine").enabled && !find("Tunnel Miner").enabled && !find("Chunk Miner").enabled && attackForced) {
+                mc.options.keyAttack.setDown(false);
+                attackForced = false;
+                chunkMineTarget = null;
+            }
+            if (m.name.equals("Target Lock")) combatTarget = null;
         }
-        if (m.enabled && m.name.equals("Test Profile")) appendTestLog("SESSION START Eio=" + VERSION);
         notifyToggle(m);
         save();
     }
@@ -906,14 +1054,16 @@ public final class EioClient implements ClientModInitializer {
         if (forwardForced) { mc.options.keyUp.setDown(false); forwardForced = false; }
         if (jumpForced) { mc.options.keyJump.setDown(false); jumpForced = false; }
         if (sneakForced) { mc.options.keyShift.setDown(false); sneakForced = false; }
+        if (attackForced) { mc.options.keyAttack.setDown(false); attackForced = false; }
         if (flyForced) restoreFly(mc);
         clearFullbright(mc);
         followTarget = null;
+        combatTarget = null;
+        chunkMineTarget = null;
         clickAccumulator = 0.0;
         auraCooldown = 0;
-        testAttackCooldown = 0;
-        testCycleTicks = 0;
-        testJumpTicks = 0;
+        triggerCooldown = 0;
+        toolSaverWarned = false;
         lowHealthAlerted = false;
         lowHealthCooldown = 0;
         creativeAssistWarned = false;
@@ -941,7 +1091,7 @@ public final class EioClient implements ClientModInitializer {
     }
 
     private static String validateModel() {
-        Set<String> categories = Set.of("Combat", "Movement", "Player", "Render", "World", "Testing", "Misc");
+        Set<String> categories = Set.of("Combat", "Movement", "Player", "Render", "World", "Mining", "Misc");
         Set<String> slugs = new HashSet<>();
         int settingCount = 0;
         for (Mod m : MODS) {
@@ -1068,6 +1218,26 @@ public final class EioClient implements ClientModInitializer {
             }
             if (nearest != null) { g.text(mc.font, "WP " + nearest.name + " " + Math.round(best) + "m", 5, y, 0xFF9DD9FF, true); y += 11; }
         }
+        if (find("Mining HUD").enabled) {
+            Mod miningHud = find("Mining HUD");
+            if (miningHud.bool("Target").value) {
+                BlockPos miningPos = chunkMineTarget;
+                if (miningPos == null && mc.hitResult instanceof BlockHitResult hit) miningPos = hit.getBlockPos();
+                if (miningPos != null) {
+                    g.text(mc.font, "Mining " + miningPos.getX() + " " + miningPos.getY() + " " + miningPos.getZ(), 5, y, 0xFFE9C67B, true);
+                    y += 11;
+                }
+            }
+            if (miningHud.bool("Tool").value) {
+                ItemStack held = mc.player.getInventory().getSelectedItem();
+                if (!held.isEmpty() && held.isDamageableItem()) {
+                    int remaining = held.getMaxDamage() - held.getDamageValue();
+                    g.text(mc.font, "Tool " + remaining + "/" + held.getMaxDamage(), 5, y, 0xFFE9C67B, true);
+                    y += 11;
+                }
+            }
+        }
+
         if (find("Reach").enabled) {
             Mod reach = find("Reach");
             Entity rt = nearestTarget(mc, reach, reach.num("Range").value, 360.0);
@@ -1078,7 +1248,7 @@ public final class EioClient implements ClientModInitializer {
             }
         }
         if (find("Target HUD").enabled) {
-            Entity t = followTarget;
+            Entity t = combatTarget != null ? combatTarget : followTarget;
             if (t == null && mc.hitResult instanceof EntityHitResult hit) t = hit.getEntity();
             if (t != null && t.isAlive()) {
                 String text = "Target " + t.getDisplayName().getString() + " " + String.format(Locale.ROOT, "%.1fm", Math.sqrt(mc.player.distanceToSqr(t)));
@@ -1211,7 +1381,7 @@ public final class EioClient implements ClientModInitializer {
     private static final class Waypoint { final String name; final double x, y, z; Waypoint(String name, double x, double y, double z) { this.name = name; this.x = x; this.y = y; this.z = z; } }
 
     public static final class ClickGui extends Screen {
-        private static final String[] CATEGORIES = {"Active", "Combat", "Movement", "Player", "Render", "World", "Testing", "Misc"};
+        private static final String[] CATEGORIES = {"Active", "Combat", "Movement", "Player", "Render", "World", "Mining", "Misc"};
         private static final int MOB_PAGE_SIZE = 8;
         private String selectedCategory = "Combat";
         private Mod selectedMod;
@@ -1677,7 +1847,7 @@ public final class EioClient implements ClientModInitializer {
                 case "Player" -> 0xFF72D7A0;
                 case "Render" -> 0xFFC195F1;
                 case "World" -> 0xFFEEC36F;
-                case "Testing" -> 0xFFF09A68;
+                case "Mining" -> 0xFFE0B767;
                 default -> 0xFF82B8D6;
             };
         }
