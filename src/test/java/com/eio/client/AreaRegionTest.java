@@ -30,6 +30,40 @@ final class AreaRegionTest {
     }
 
     @Test
+    void splitsDepthIntoFiveBlockTopDownLayers() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 13);
+        assertNotNull(r);
+        assertEquals(3, r.layerCount());
+        assertEquals(70, r.layerTopY(0));
+        assertEquals(66, r.layerBottomY(0));
+        assertEquals(65, r.layerTopY(1));
+        assertEquals(61, r.layerBottomY(1));
+        assertEquals(60, r.layerTopY(2));
+        assertEquals(58, r.layerBottomY(2));
+    }
+
+    @Test
+    void exactFiveBlockDepthUsesOneLayer() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(1, 64, 1), 5);
+        assertNotNull(r);
+        assertEquals(1, r.layerCount());
+        assertEquals(64, r.layerTopY(0));
+        assertEquals(60, r.layerBottomY(0));
+    }
+
+    @Test
+    void partialFinalLayerDoesNotExceedRequestedDepth() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(1, 64, 1), 6);
+        assertNotNull(r);
+        assertEquals(2, r.layerCount());
+        assertEquals(64, r.layerTopY(0));
+        assertEquals(60, r.layerBottomY(0));
+        assertEquals(59, r.layerTopY(1));
+        assertEquals(59, r.layerBottomY(1));
+        assertFalse(r.hasLayer(2));
+    }
+
+    @Test
     void serpentineNavigationDoesNotLeaveBounds() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(2, 64, 1), 2);
         assertEquals(new BlockPos(0, 64, 0), r.navigationCell(0, 64));
