@@ -25,7 +25,11 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
+      - name: Extract project
+        run: unzip -q eioclient-legit-0.3.0.zip -d extracted
+
       - name: Build
+        working-directory: extracted/eioclient
         run: gradle build --stacktrace
 
       - name: Upload JAR
@@ -33,5 +37,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: EioClient-JAR
-          path: build/libs/*.jar
+          path: extracted/eioclient/build/libs/*.jar
           if-no-files-found: error
