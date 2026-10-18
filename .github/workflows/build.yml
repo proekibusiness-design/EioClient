@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Prepare Eio Client 0.10.0
+      - name: Prepare Eio Client 0.11.0
         shell: bash
         run: |
           rm -rf extracted
@@ -33,7 +33,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.10.0+26.3
+          mod_version=0.11.0+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -48,46 +48,45 @@ jobs:
             implementation "net.fabricmc:fabric-loader:${project.loader_version}"
             implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
           }
-          processResources {
-            inputs.property "version", project.version
-          }
+          processResources { inputs.property "version", project.version }
           tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
           java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
 
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.10.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.10.0 compact GUI rebuild'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
+          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.11.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.11.0 compact glass ClickGUI redesign'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
 
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
           python3 ../../.buildsrc/patch010.py
+          python3 ../../.buildsrc/patch011.py
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
             "key.category.eioclient.general": "Eio Client",
-            "key.eioclient.v0100.clickgui": "Open Eio ClickGUI",
-            "key.eioclient.v0100.kill_aura": "Kill Aura",
-            "key.eioclient.v0100.auto_clicker": "Auto Clicker",
-            "key.eioclient.v0100.sprint": "Sprint",
-            "key.eioclient.v0100.autowalk": "Auto Walk",
-            "key.eioclient.v0100.follow": "Follow",
-            "key.eioclient.v0100.fly": "Fly",
-            "key.eioclient.v0100.safewalk": "Safe Walk",
-            "key.eioclient.v0100.auto_jump": "Auto Jump",
-            "key.eioclient.v0100.auto_respawn": "Auto Respawn",
-            "key.eioclient.v0100.inventory_info": "Inventory Info",
-            "key.eioclient.v0100.durability_hud": "Durability HUD",
-            "key.eioclient.v0100.coordinates": "Coordinates",
-            "key.eioclient.v0100.fps": "FPS",
-            "key.eioclient.v0100.active_modules": "Active Modules",
-            "key.eioclient.v0100.target_hud": "Target HUD",
-            "key.eioclient.v0100.fullbright": "Fullbright",
-            "key.eioclient.v0100.chunk_info": "Chunk Info",
-            "key.eioclient.v0100.waypoints": "Waypoints",
-            "key.eioclient.v0100.test_profile": "Test Profile",
-            "key.eioclient.v0100.session_info": "Session Info",
-            "key.eioclient.v0100.notifications": "Notifications"
+            "key.eioclient.v0110.clickgui": "Open Eio ClickGUI",
+            "key.eioclient.v0110.kill_aura": "Kill Aura",
+            "key.eioclient.v0110.auto_clicker": "Auto Clicker",
+            "key.eioclient.v0110.sprint": "Sprint",
+            "key.eioclient.v0110.autowalk": "Auto Walk",
+            "key.eioclient.v0110.follow": "Follow",
+            "key.eioclient.v0110.fly": "Fly",
+            "key.eioclient.v0110.safewalk": "Safe Walk",
+            "key.eioclient.v0110.auto_jump": "Auto Jump",
+            "key.eioclient.v0110.auto_respawn": "Auto Respawn",
+            "key.eioclient.v0110.inventory_info": "Inventory Info",
+            "key.eioclient.v0110.durability_hud": "Durability HUD",
+            "key.eioclient.v0110.coordinates": "Coordinates",
+            "key.eioclient.v0110.fps": "FPS",
+            "key.eioclient.v0110.active_modules": "Active Modules",
+            "key.eioclient.v0110.target_hud": "Target HUD",
+            "key.eioclient.v0110.fullbright": "Fullbright",
+            "key.eioclient.v0110.chunk_info": "Chunk Info",
+            "key.eioclient.v0110.waypoints": "Waypoints",
+            "key.eioclient.v0110.test_profile": "Test Profile",
+            "key.eioclient.v0110.session_info": "Session Info",
+            "key.eioclient.v0110.notifications": "Notifications"
           }
           EOF
 
@@ -100,14 +99,16 @@ jobs:
         run: |
           JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
-          unzip -p "$JAR" fabric.mod.json | grep -Fq '"version": "0.10.0+26.3"'
+          unzip -p "$JAR" fabric.mod.json | grep -Fq '"version": "0.11.0+26.3"'
           jar tf "$JAR" | grep -q 'com/eio/client/EioClient.class'
-          echo "Verified $JAR"
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' | grep -q '480'
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' | grep -q '270'
+          echo "Verified compact 0.11.0 GUI in $JAR"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.10.0
+          name: EioClient-26.3-v0.11.0
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
