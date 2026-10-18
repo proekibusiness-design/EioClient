@@ -33,5 +33,7 @@
   "key.eioclient.notifications": "Notifications",
   "key.eioclient.cps": "CPS",
   "key.eioclient.keystrokes": "Keystrokes",
-  "key.eioclient.held_item": "Held Item"
+  "key.eioclient.held_item": "Held Item",
+  "key.eioclient.reach": "Reach",
+  "key.eioclient.creative_assist": "Creative Assist"
 }

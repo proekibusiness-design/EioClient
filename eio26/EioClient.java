@@ -37,8 +37,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.17.0";
-    public static final String BUILD_ID = "EIO-017-QA1";
+    public static final String VERSION = "0.18.0";
+    public static final String BUILD_ID = "EIO-018-QA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -68,6 +68,8 @@ public final class EioClient implements ClientModInitializer {
     private static boolean flyPrevFlying;
     private static boolean lowHealthAlerted;
     private static int lowHealthCooldown;
+    private static boolean creativeAssistWarned;
+    private static boolean creativeAssistSpeedForced;
     private static String configSource = "defaults";
     private static final ArrayDeque<Long> ATTACK_TIMES = new ArrayDeque<>();
     private static boolean runtimeSafeMode;
@@ -114,6 +116,11 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Mobs", true, "Allow attacks on non-player living entities.")
                 .bool("Invisible", false, "Allow attacks on invisible living targets.")
                 .bool("Require Attack", false, "Only click while Minecraft's attack key is held.");
+        mod("Reach", "Combat", "Shows the nearest allowed target inside a configurable 3-10 block radius without changing server hit distance.", -1)
+                .num("Range", 6.0, 3.0, 10.0, 0.25, "Target scan and display radius in blocks.")
+                .bool("Players", true, "Include players in Reach display targeting.")
+                .bool("Mobs", true, "Include non-player living entities in Reach display targeting.")
+                .bool("Invisible", false, "Include invisible living entities in Reach display targeting.");
 
         mod("Sprint", "Movement", "Automatically sprints while moving forward.", InputConstants.KEY_R)
                 .bool("Hunger Check", true, "Only sprint when your food level is high enough.");
@@ -133,6 +140,9 @@ public final class EioClient implements ClientModInitializer {
         mod("Auto Swim", "Movement", "Holds jump while you are in water so swimming upward is effortless.", -1);
 
         mod("Auto Respawn", "Player", "Automatically respawns after death.", -1);
+        mod("Creative Assist", "Player", "Creative-flight helper that activates only when the server/player already grants flight permission.", -1)
+                .bool("Auto Fly", true, "Automatically enter flight while creative flight permission is available.")
+                .num("Flight Speed", 0.10, 0.05, 1.00, 0.05, "Creative flight speed while this helper is active.");
         mod("Low Health Alert", "Player", "Shows an urgent HUD alert when your health drops below a configurable threshold.", -1)
                 .num("Threshold", 6.0, 1.0, 20.0, 0.5, "Health value that triggers the warning.")
                 .num("Cooldown", 10.0, 2.0, 60.0, 1.0, "Minimum seconds between repeated low-health warnings.");
@@ -561,6 +571,7 @@ public final class EioClient implements ClientModInitializer {
         Mod autoJump = find("Auto Jump");
         Mod autoSwim = find("Auto Swim");
         Mod respawn = find("Auto Respawn");
+        Mod creative = find("Creative Assist");
         Mod lowHealth = find("Low Health Alert");
         Mod clicker = find("Auto Clicker");
         Mod aura = find("Kill Aura");
@@ -606,6 +617,25 @@ public final class EioClient implements ClientModInitializer {
             restoreFly(mc);
         }
         if (respawn.enabled && mc.player.isDeadOrDying()) mc.player.respawn();
+
+        if (creative.enabled && !fly.enabled && creative.bool("Auto Fly").value) {
+            var abilities = mc.player.getAbilities();
+            if (abilities.mayfly) {
+                abilities.flying = true;
+                abilities.setFlyingSpeed((float) creative.num("Flight Speed").value);
+                creativeAssistSpeedForced = true;
+                creativeAssistWarned = false;
+            } else if (!creativeAssistWarned) {
+                notifyMessage("CREATIVE ASSIST: SERVER FLIGHT PERMISSION REQUIRED", 0xFFFFB36B, 3200L);
+                creativeAssistWarned = true;
+            }
+        } else {
+            creativeAssistWarned = false;
+            if (creativeAssistSpeedForced && !fly.enabled) {
+                mc.player.getAbilities().setFlyingSpeed(0.05f);
+                creativeAssistSpeedForced = false;
+            }
+        }
 
         if (lowHealth.enabled) {
             if (lowHealthCooldown > 0) lowHealthCooldown--;
@@ -863,6 +893,9 @@ public final class EioClient implements ClientModInitializer {
         testJumpTicks = 0;
         lowHealthAlerted = false;
         lowHealthCooldown = 0;
+        creativeAssistWarned = false;
+        if (creativeAssistSpeedForced && mc.player != null && !find("Fly").enabled) mc.player.getAbilities().setFlyingSpeed(0.05f);
+        creativeAssistSpeedForced = false;
     }
 
     private static void panic(Minecraft mc) {
@@ -1011,6 +1044,16 @@ public final class EioClient implements ClientModInitializer {
                 if (d < best) { best = d; nearest = wp; }
             }
             if (nearest != null) { g.text(mc.font, "WP " + nearest.name + " " + Math.round(best) + "m", 5, y, 0xFF9DD9FF, true); y += 11; }
+        }
+        if (find("Reach").enabled) {
+            Mod reach = find("Reach");
+            Entity rt = nearestTarget(mc, reach.num("Range").value, 360.0,
+                    reach.bool("Players").value, reach.bool("Mobs").value, reach.bool("Invisible").value);
+            if (rt != null) {
+                double rd = Math.sqrt(mc.player.distanceToSqr(rt));
+                g.text(mc.font, "Reach " + rt.getDisplayName().getString() + " " + String.format(Locale.ROOT, "%.1fm", rd), 5, y, 0xFF9DD9FF, true);
+                y += 11;
+            }
         }
         if (find("Target HUD").enabled) {
             Entity t = followTarget;
