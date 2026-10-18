@@ -37,8 +37,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.16.0";
-    public static final String BUILD_ID = "EIO-016-QA2";
+    public static final String VERSION = "0.17.0";
+    public static final String BUILD_ID = "EIO-017-QA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -75,6 +75,28 @@ public final class EioClient implements ClientModInitializer {
     private static String lastRuntimeFault = "none";
     private static final long sessionStartedNanos = System.nanoTime();
     private static final DateTimeFormatter CLOCK_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
+    private static final String[] FOLLOW_MOB_IDS = {
+            "entity.minecraft.allay", "entity.minecraft.armadillo", "entity.minecraft.axolotl", "entity.minecraft.bat",
+            "entity.minecraft.bee", "entity.minecraft.blaze", "entity.minecraft.bogged", "entity.minecraft.breeze",
+            "entity.minecraft.camel", "entity.minecraft.cat", "entity.minecraft.cave_spider", "entity.minecraft.chicken",
+            "entity.minecraft.cod", "entity.minecraft.cow", "entity.minecraft.creaking", "entity.minecraft.creeper",
+            "entity.minecraft.dolphin", "entity.minecraft.donkey", "entity.minecraft.drowned", "entity.minecraft.elder_guardian",
+            "entity.minecraft.enderman", "entity.minecraft.endermite", "entity.minecraft.evoker", "entity.minecraft.fox",
+            "entity.minecraft.frog", "entity.minecraft.ghast", "entity.minecraft.glow_squid", "entity.minecraft.goat",
+            "entity.minecraft.guardian", "entity.minecraft.hoglin", "entity.minecraft.horse", "entity.minecraft.husk",
+            "entity.minecraft.iron_golem", "entity.minecraft.llama", "entity.minecraft.magma_cube", "entity.minecraft.mooshroom",
+            "entity.minecraft.mule", "entity.minecraft.ocelot", "entity.minecraft.panda", "entity.minecraft.parrot",
+            "entity.minecraft.phantom", "entity.minecraft.pig", "entity.minecraft.piglin", "entity.minecraft.piglin_brute",
+            "entity.minecraft.pillager", "entity.minecraft.polar_bear", "entity.minecraft.pufferfish", "entity.minecraft.rabbit",
+            "entity.minecraft.ravager", "entity.minecraft.salmon", "entity.minecraft.sheep", "entity.minecraft.shulker",
+            "entity.minecraft.silverfish", "entity.minecraft.skeleton", "entity.minecraft.skeleton_horse", "entity.minecraft.slime",
+            "entity.minecraft.sniffer", "entity.minecraft.snow_golem", "entity.minecraft.spider", "entity.minecraft.squid",
+            "entity.minecraft.stray", "entity.minecraft.strider", "entity.minecraft.tadpole", "entity.minecraft.trader_llama",
+            "entity.minecraft.tropical_fish", "entity.minecraft.turtle", "entity.minecraft.vex", "entity.minecraft.villager",
+            "entity.minecraft.vindicator", "entity.minecraft.wandering_trader", "entity.minecraft.warden", "entity.minecraft.witch",
+            "entity.minecraft.wither", "entity.minecraft.wither_skeleton", "entity.minecraft.wolf", "entity.minecraft.zoglin",
+            "entity.minecraft.zombie", "entity.minecraft.zombie_horse", "entity.minecraft.zombie_villager", "entity.minecraft.zombified_piglin"
+    };
 
     static {
         mod("Kill Aura", "Combat", "Attacks the nearest allowed living target inside the configured range.", InputConstants.KEY_K)
@@ -96,13 +118,14 @@ public final class EioClient implements ClientModInitializer {
         mod("Sprint", "Movement", "Automatically sprints while moving forward.", InputConstants.KEY_R)
                 .bool("Hunger Check", true, "Only sprint when your food level is high enough.");
         mod("AutoWalk", "Movement", "Keeps moving forward until disabled.", InputConstants.KEY_G);
-        mod("Follow", "Movement", "Follows a selected or nearby living entity while keeping a configurable distance.", InputConstants.KEY_H)
+        mod("Follow", "Movement", "Follows the nearest allowed player or selected mob type while keeping a configurable distance.", InputConstants.KEY_H)
                 .num("Search Range", 24.0, 4.0, 64.0, 1.0, "Maximum distance used when finding a follow target.")
                 .num("Distance", 3.0, 1.0, 12.0, 0.5, "Distance to maintain behind the follow target.")
                 .bool("Players", true, "Allow following players.")
-                .bool("Mobs", true, "Allow following non-player living entities.")
+                .bool("Mobs", true, "Master switch for following non-player living entities.")
                 .bool("Face Target", true, "Turn your view toward the follow target.")
-                .bool("Sprint", true, "Sprint while closing distance to the target.");
+                .bool("Sprint", true, "Sprint while closing distance to the target.")
+                .mobList("Mob Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Follow is allowed to target.");
         mod("Fly", "Movement", "Creative-style client flight with adjustable speed.", InputConstants.KEY_F)
                 .num("Speed", 0.10, 0.05, 1.00, 0.05, "Local flying speed while the module is enabled.");
         mod("SafeWalk", "Movement", "Automatically sneaks while moving on the ground to reduce edge falls.", -1);
@@ -195,7 +218,7 @@ public final class EioClient implements ClientModInitializer {
                         .then(ClientCommands.literal("doctor").executes(c -> {
                             long bound = MODS.stream().filter(m -> m.bind != null && !m.bind.isUnbound()).count();
                             String report = validateModel() + " | Eio " + VERSION + " [" + BUILD_ID + "] | enabled=" + enabledCount()
-                                    + " bound=" + bound + " | GUI=438x254 | config=" + configSource
+                                    + " bound=" + bound + " | GUI=690x390 | config=" + configSource
                                     + " | backup=" + Files.exists(CONFIG_BACKUP) + " | safeMode=" + runtimeSafeMode
                                     + " | faults=" + runtimeFaults + " | lastFault=" + lastRuntimeFault;
                             c.getSource().sendFeedback(Component.literal(report));
@@ -415,6 +438,7 @@ public final class EioClient implements ClientModInitializer {
             for (Setting setting : m.settings) {
                 if (setting instanceof BoolSetting b) p.setProperty("setting." + m.name + "." + setting.name, Boolean.toString(b.value));
                 else if (setting instanceof NumSetting n) p.setProperty("setting." + m.name + "." + setting.name, Double.toString(n.value));
+                else if (setting instanceof MobListSetting ml) p.setProperty("mobfilter." + m.name + "." + setting.name, ml.disabledCsv());
             }
         }
         p.setProperty("_schema", "4");
@@ -431,6 +455,11 @@ public final class EioClient implements ClientModInitializer {
             for (Setting setting : m.settings) {
                 if (setting instanceof BoolSetting b) b.value = b.defaultValue;
                 else if (setting instanceof NumSetting n) n.set(n.defaultValue);
+                else if (setting instanceof MobListSetting ml) ml.reset();
+                if (setting instanceof MobListSetting ml) {
+                    ml.loadDisabledCsv(p.getProperty("mobfilter." + m.name + "." + setting.name, ""));
+                    continue;
+                }
                 String v = p.getProperty("setting." + m.name + "." + setting.name);
                 if (v == null) continue;
                 try {
@@ -689,11 +718,35 @@ public final class EioClient implements ClientModInitializer {
         return Math.abs(delta);
     }
 
+    private static boolean validFollowTarget(Minecraft mc, Mod follow, Entity target) {
+        if (mc.player == null || !(target instanceof LivingEntity) || !target.isAlive() || target == mc.player) return false;
+        if (target instanceof Player) return follow.bool("Players").value;
+        if (!follow.bool("Mobs").value) return false;
+        MobListSetting filter = follow.mobList("Mob Selection");
+        String id = target.getType().getDescriptionId();
+        filter.touch(id);
+        return filter.allows(id);
+    }
+
+    private static Entity nearestFollowTarget(Minecraft mc, Mod follow, double range) {
+        if (mc.player == null || mc.level == null) return null;
+        AABB box = mc.player.getBoundingBox().inflate(range);
+        Entity best = null;
+        double bestSq = range * range;
+        for (Entity e : mc.level.getEntities(mc.player, box, e -> e instanceof LivingEntity && e.isAlive())) {
+            if (!validFollowTarget(mc, follow, e)) continue;
+            double d = mc.player.distanceToSqr(e);
+            if (d <= bestSq) { bestSq = d; best = e; }
+        }
+        return best;
+    }
+
     private static boolean runFollow(Minecraft mc, Mod follow) {
         if (mc.player == null) return false;
         double search = follow.num("Search Range").value;
-        if (followTarget == null || !followTarget.isAlive() || mc.player.distanceToSqr(followTarget) > search * search) {
-            followTarget = nearestTarget(mc, search, 360.0, follow.bool("Players").value, follow.bool("Mobs").value, true);
+        if (followTarget == null || !validFollowTarget(mc, follow, followTarget)
+                || mc.player.distanceToSqr(followTarget) > search * search) {
+            followTarget = nearestFollowTarget(mc, follow, search);
         }
         if (followTarget == null) return false;
         double dist = Math.sqrt(mc.player.distanceToSqr(followTarget));
@@ -823,6 +876,7 @@ public final class EioClient implements ClientModInitializer {
         for (Setting setting : m.settings) {
             if (setting instanceof BoolSetting b) b.value = b.defaultValue;
             else if (setting instanceof NumSetting n) n.set(n.defaultValue);
+            else if (setting instanceof MobListSetting ml) ml.reset();
         }
     }
 
@@ -1046,6 +1100,37 @@ public final class EioClient implements ClientModInitializer {
         void set(double v) { v = Math.max(min, Math.min(max, v)); value = Math.round(v / step) * step; value = Math.max(min, Math.min(max, value)); }
         String display() { return step < 0.1 ? String.format(Locale.ROOT, "%.2f", value) : String.format(Locale.ROOT, "%.1f", value); }
     }
+    private static final class MobListSetting extends Setting {
+        final LinkedHashMap<String, Boolean> values = new LinkedHashMap<>();
+        MobListSetting(String name, String[] ids, String description) {
+            super(name, description);
+            for (String id : ids) values.put(id, true);
+        }
+        void touch(String id) { if (id != null && !id.isBlank()) values.putIfAbsent(id, true); }
+        boolean allows(String id) { touch(id); return values.getOrDefault(id, true); }
+        void set(String id, boolean value) { touch(id); values.put(id, value); }
+        void setAll(boolean value) { for (String id : new ArrayList<>(values.keySet())) values.put(id, value); }
+        void reset() { setAll(true); }
+        List<String> ids() { List<String> ids = new ArrayList<>(values.keySet()); ids.sort(Comparator.comparing(MobListSetting::label)); return ids; }
+        int enabledCount() { int n = 0; for (boolean value : values.values()) if (value) n++; return n; }
+        String disabledCsv() { StringJoiner j = new StringJoiner(","); for (var e : values.entrySet()) if (!e.getValue()) j.add(e.getKey()); return j.toString(); }
+        void loadDisabledCsv(String csv) {
+            reset();
+            if (csv == null || csv.isBlank()) return;
+            for (String raw : csv.split(",")) { String id = raw.trim(); if (!id.isEmpty()) set(id, false); }
+        }
+        static String label(String id) {
+            String raw = id == null ? "Unknown" : id.substring(id.lastIndexOf('.') + 1).replace('_', ' ');
+            StringBuilder out = new StringBuilder();
+            boolean cap = true;
+            for (int i = 0; i < raw.length(); i++) {
+                char c = raw.charAt(i);
+                out.append(cap ? Character.toUpperCase(c) : c);
+                cap = c == ' ';
+            }
+            return out.toString();
+        }
+    }
     private static final class Mod {
         final String name, category, description; final int defaultKey; boolean enabled; KeyMapping bind; final List<Setting> settings = new ArrayList<>();
         Mod(String name, String category, String description, int defaultKey) { this.name = name; this.category = category; this.description = description; this.defaultKey = defaultKey; }
@@ -1053,15 +1138,19 @@ public final class EioClient implements ClientModInitializer {
         Mod bool(String name, boolean value, String description) { settings.add(new BoolSetting(name, value, description)); return this; }
         Mod num(String name, double value, double min, double max, double step) { return num(name, value, min, max, step, name); }
         Mod num(String name, double value, double min, double max, double step, String description) { settings.add(new NumSetting(name, value, min, max, step, description)); return this; }
+        Mod mobList(String name, String[] ids, String description) { settings.add(new MobListSetting(name, ids, description)); return this; }
         BoolSetting bool(String name) { for (Setting s : settings) if (s instanceof BoolSetting b && b.name.equals(name)) return b; throw new IllegalArgumentException(name); }
         NumSetting num(String name) { for (Setting s : settings) if (s instanceof NumSetting n && n.name.equals(name)) return n; throw new IllegalArgumentException(name); }
+        MobListSetting mobList(String name) { for (Setting s : settings) if (s instanceof MobListSetting ml && ml.name.equals(name)) return ml; throw new IllegalArgumentException(name); }
     }
     private static final class Waypoint { final String name; final double x, y, z; Waypoint(String name, double x, double y, double z) { this.name = name; this.x = x; this.y = y; this.z = z; } }
 
     public static final class ClickGui extends Screen {
         private static final String[] CATEGORIES = {"Combat", "Movement", "Player", "Render", "World", "Testing", "Misc"};
+        private static final int MOB_PAGE_SIZE = 8;
         private String selectedCategory = "Combat";
         private Mod selectedMod;
+        private int mobPage;
 
         ClickGui() { super(Component.literal("Eio Client")); }
         @Override public boolean isPauseScreen() { return false; }
@@ -1074,10 +1163,11 @@ public final class EioClient implements ClientModInitializer {
             return null;
         }
 
-        private int panelW() { return Math.min(438, width - 14); }
-        private int panelH() { return Math.min(254, height - 14); }
+        private int panelW() { return Math.max(430, Math.min(690, width - 18)); }
+        private int panelH() { return Math.max(270, Math.min(390, height - 18)); }
         private int panelX() { return (width - panelW()) / 2; }
         private int panelY() { return (height - panelH()) / 2; }
+        private int categoryCount(String category) { int count = 0; for (Mod m : MODS) if (m.category.equals(category)) count++; return count; }
 
         @Override
         public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float delta) {
@@ -1085,119 +1175,176 @@ public final class EioClient implements ClientModInitializer {
             int accent = categoryColor(selectedCategory);
             String help = selectedMod == null ? "Choose a module" : selectedMod.description;
 
-            // Very light dimming, soft shadow, then translucent glass shell.
-            g.fill(0, 0, width, height, 0x0A000000);
-            g.fill(x + 3, y + 4, x + bw + 3, y + bh + 4, 0x35000000);
-            g.fill(x, y, x + bw, y + bh, 0xA0080D13);
-            g.fill(x, y, x + bw, y + 22, 0xC0101720);
-            g.fill(x, y + 21, x + bw, y + 22, 0x88475562);
-            g.fill(x, y, x + 2, y + bh, accent);
+            g.fill(0, 0, width, height, 0x18000000);
+            g.fill(x + 5, y + 7, x + bw + 5, y + bh + 7, 0x30000000);
+            g.fill(x, y, x + bw, y + bh, 0xE0090E14);
+            g.fill(x + 1, y + 1, x + bw - 1, y + bh - 1, 0x80131A22);
+            g.fill(x, y, x + bw, y + 31, 0xEE0C131B);
+            g.fill(x, y + 30, x + bw, y + 31, 0x66405260);
+            g.fill(x, y, x + 3, y + bh, accent);
 
-            g.text(font, "Eio", x + 9, y + 7, 0xFFF3F8FB, true);
-            g.text(font, VERSION, x + 31, y + 7, 0xFF64727E, false);
-            String enabledStatus = enabledCount() + "/" + MODS.size() + (runtimeSafeMode ? " SAFE" : "");
-            g.text(font, enabledStatus, x + 76, y + 7, runtimeSafeMode ? 0xFFFFA071 : 0xFF6F8898, false);
-            String closeHint = "RSHIFT";
-            g.text(font, closeHint, x + bw - font.width(closeHint) - 8, y + 7, 0xFF64727E, false);
+            g.text(font, "EIO", x + 13, y + 10, 0xFFF4F8FB, true);
+            g.text(font, "CLIENT  /  " + VERSION, x + 39, y + 10, 0xFF7C8B97, false);
+            String status = runtimeSafeMode ? "SAFE MODE" : enabledCount() + " ACTIVE";
+            int statusW = font.width(status) + 12;
+            g.fill(x + bw - statusW - 61, y + 7, x + bw - 61, y + 24, runtimeSafeMode ? 0x665D3424 : 0x6030483C);
+            g.text(font, status, x + bw - statusW - 55, y + 12, runtimeSafeMode ? 0xFFFFAD7D : 0xFF79DCAA, false);
+            g.text(font, "RSHIFT", x + bw - 49, y + 11, 0xFF667682, false);
 
-            // Slim horizontal categories - no large sidebar.
-            int tabsX = x + 7, tabsY = y + 27;
-            int gap = 2;
-            int tabW = (bw - 14 - gap * (CATEGORIES.length - 1)) / CATEGORIES.length;
-            for (int i = 0; i < CATEGORIES.length; i++) {
-                String category = CATEGORIES[i];
-                int tx = tabsX + i * (tabW + gap);
+            int bodyY = y + 39;
+            int footerY = y + bh - 25;
+            int railX = x + 10, railW = 98;
+            int modsX = railX + railW + 8, modsW = Math.min(198, Math.max(154, bw / 3 - 22));
+            int detailX = modsX + modsW + 8;
+            int detailW = x + bw - 10 - detailX;
+
+            g.fill(railX, bodyY, railX + railW, footerY - 6, 0x5610171F);
+            g.fill(modsX, bodyY, modsX + modsW, footerY - 6, 0x4210171F);
+            g.fill(detailX, bodyY, detailX + detailW, footerY - 6, 0x5210171F);
+
+            g.text(font, "CATEGORIES", railX + 8, bodyY + 8, 0xFF61717E, false);
+            int cy = bodyY + 23;
+            for (String category : CATEGORIES) {
                 boolean active = category.equals(selectedCategory);
-                boolean hover = in(mx, my, tx, tabsY, tabW, 15);
-                g.fill(tx, tabsY, tx + tabW, tabsY + 15, active ? 0xB51A2731 : (hover ? 0x71151F27 : 0x3510151B));
-                if (active) g.fill(tx + 4, tabsY + 13, tx + tabW - 4, tabsY + 15, accent);
-                g.centeredText(font, shortCat(category), tx + tabW / 2, tabsY + 5, active ? 0xFFF0F6FA : 0xFF8D9AA5);
-                if (hover) help = "Category: " + category;
+                boolean hover = in(mx, my, railX + 5, cy, railW - 10, 25);
+                if (hover || active) g.fill(railX + 5, cy, railX + railW - 5, cy + 25, active ? 0x8A1B2731 : 0x4518232C);
+                if (active) g.fill(railX + 5, cy + 5, railX + 8, cy + 20, accent);
+                g.text(font, shortCat(category), railX + 14, cy + 8, active ? 0xFFF3F7FA : 0xFFAAB5BD, active);
+                String count = Integer.toString(categoryCount(category));
+                g.text(font, count, railX + railW - font.width(count) - 12, cy + 8, active ? accent : 0xFF596873, false);
+                if (hover) help = "Open " + category + " modules";
+                cy += 28;
             }
 
-            int bodyY = y + 47;
-            int footerY = y + bh - 22;
-            int modulesX = x + 7;
-            int modulesW = 232;
-            int settingsX = modulesX + modulesW + 7;
-            int settingsW = x + bw - 7 - settingsX;
-
-            g.fill(modulesX, bodyY, modulesX + modulesW, footerY - 4, 0x480D1218);
-            g.fill(settingsX, bodyY, settingsX + settingsW, footerY - 4, 0x480D1218);
-
-            // Dense two-column module cards.
-            int cardGap = 4;
-            int cardW = (modulesW - 12 - cardGap) / 2;
-            int index = 0;
+            g.text(font, selectedCategory.toUpperCase(Locale.ROOT), modsX + 8, bodyY + 8, accent, true);
+            int myCard = bodyY + 23;
             for (Mod m : MODS) if (m.category.equals(selectedCategory)) {
-                int col = index % 2;
-                int row = index / 2;
-                int cx = modulesX + 4 + col * (cardW + cardGap);
-                int cy = bodyY + 5 + row * 24;
                 boolean selected = m == selectedMod;
-                boolean hover = in(mx, my, cx, cy, cardW, 20);
-                g.fill(cx, cy, cx + cardW, cy + 20, selected ? 0xA01B2B35 : (hover ? 0x7217212A : 0x3511161C));
-                if (m.enabled) g.fill(cx, cy, cx + 2, cy + 20, 0xFF62D39B);
-                g.text(font, trim(m.name, 13), cx + 6, cy + 6, m.enabled ? 0xFFF3F7F9 : 0xFFC3CDD5, false);
+                boolean hover = in(mx, my, modsX + 5, myCard, modsW - 10, 20);
+                g.fill(modsX + 5, myCard, modsX + modsW - 5, myCard + 20,
+                        selected ? 0x8D1D2A34 : (hover ? 0x5618232C : 0x2411161C));
+                if (selected) g.fill(modsX + 5, myCard, modsX + 7, myCard + 20, accent);
+                g.fill(modsX + 12, myCard + 8, modsX + 16, myCard + 12, m.enabled ? 0xFF6FE0A5 : 0xFF55636D);
+                g.text(font, trim(m.name, Math.max(10, (modsW - 49) / 6)), modsX + 22, myCard + 6,
+                        selected ? 0xFFF2F6F8 : 0xFFC2CCD3, false);
                 String state = m.enabled ? "ON" : "";
-                if (!state.isEmpty()) g.text(font, state, cx + cardW - font.width(state) - 5, cy + 6, 0xFF72DDA5, false);
+                if (!state.isEmpty()) g.text(font, state, modsX + modsW - font.width(state) - 11, myCard + 6, 0xFF77DDA9, false);
                 if (hover) help = m.description;
-                index++;
+                myCard += 22;
             }
 
             if (selectedMod == null) {
-                g.text(font, "Choose a module", settingsX + 8, bodyY + 10, 0xFFD7E0E8, false);
+                g.centeredText(font, "Select a module", detailX + detailW / 2, bodyY + 18, 0xFF83919C);
             } else {
-                int sx = settingsX + 6;
-                int sw = settingsW - 12;
-                int sy = bodyY + 6;
+                int sx = detailX + 9, sw = detailW - 18, sy = bodyY + 8;
+                g.text(font, selectedMod.name, sx, sy, 0xFFF4F7F9, true);
+                String category = selectedMod.category.toUpperCase(Locale.ROOT);
+                g.text(font, category, sx, sy + 12, accent, false);
 
-                // Header row doubles as the compact enable switch.
-                boolean hoverToggle = in(mx, my, sx, sy, sw, 18);
-                g.fill(sx, sy, sx + sw, sy + 18, selectedMod.enabled ? 0x8E1A4A39 : (hoverToggle ? 0x6219222A : 0x3B11171D));
-                g.text(font, trim(selectedMod.name, 18), sx + 6, sy + 5, 0xFFF0F4F7, true);
-                String state = selectedMod.enabled ? "ON" : "OFF";
-                g.text(font, state, sx + sw - font.width(state) - 6, sy + 5, selectedMod.enabled ? 0xFF73DFA7 : 0xFF86929C, false);
-                if (hoverToggle) help = "Toggle " + selectedMod.name;
-                sy += 21;
+                int toggleW = 42, toggleX = sx + sw - toggleW;
+                boolean toggleHover = in(mx, my, toggleX, sy, toggleW, 19);
+                g.fill(toggleX, sy, toggleX + toggleW, sy + 19, selectedMod.enabled ? 0xB12F7558 : (toggleHover ? 0x78505A62 : 0x60414A51));
+                int knobX = selectedMod.enabled ? toggleX + 25 : toggleX + 4;
+                g.fill(knobX, sy + 4, knobX + 13, sy + 15, selectedMod.enabled ? 0xFFF2FFF8 : 0xFFB9C2C8);
+                if (toggleHover) help = "Toggle " + selectedMod.name;
+                sy += 31;
 
-                // Key row opens vanilla Controls, preserving Minecraft's native rebinding behavior.
-                boolean hoverBind = in(mx, my, sx, sy, sw, 17);
-                g.fill(sx, sy, sx + sw, sy + 17, hoverBind ? 0x661A2530 : 0x3511161C);
+                boolean bindHover = in(mx, my, sx, sy, sw, 22);
+                g.fill(sx, sy, sx + sw, sy + 22, bindHover ? 0x681A2731 : 0x35121920);
+                g.text(font, "KEYBIND", sx + 7, sy + 7, 0xFF80909C, false);
                 String key = selectedMod.bind == null || selectedMod.bind.isUnbound() ? "NONE" : selectedMod.bind.getTranslatedKeyMessage().getString();
-                g.text(font, "Keybind", sx + 5, sy + 5, 0xFFBBC5CD, false);
-                String keyTrim = trim(key, 10);
-                g.text(font, keyTrim, sx + sw - font.width(keyTrim) - 5, sy + 5, 0xFF94D8F6, false);
-                if (hoverBind) help = "Open Minecraft Controls to change this keybind";
-                sy += 20;
+                String keyText = "[ " + trim(key, 13) + " ]";
+                g.text(font, keyText, sx + sw - font.width(keyText) - 7, sy + 7, 0xFF9EDCFA, false);
+                if (bindHover) help = "Open Minecraft Controls to change this keybind";
+                sy += 30;
 
-                // Every current module setting fits without hidden/unclickable rows.
+                g.text(font, "SETTINGS", sx, sy, 0xFF647581, false);
+                sy += 12;
                 for (Setting setting : selectedMod.settings) {
-                    boolean hover = in(mx, my, sx, sy, sw, 18);
-                    g.fill(sx, sy, sx + sw, sy + 18, hover ? 0x6119232C : 0x3011161C);
+                    if (setting instanceof MobListSetting ml) {
+                        help = renderMobSelector(g, mx, my, sx, sy, sw, Math.max(64, footerY - 9 - sy), ml, help, accent);
+                        break;
+                    }
+                    boolean hover = in(mx, my, sx, sy, sw, 22);
+                    g.fill(sx, sy, sx + sw, sy + 22, hover ? 0x571A252E : 0x2911161C);
                     if (setting instanceof BoolSetting b) {
-                        g.text(font, trim(b.name, 14), sx + 5, sy + 5, 0xFFD5DDE4, false);
-                        String value = (b.value ? "ON" : "OFF") + (b.value != b.defaultValue ? "*" : "");
-                        g.text(font, value, sx + sw - font.width(value) - 5, sy + 5, b.value ? 0xFF69D99B : 0xFFC87575, false);
+                        g.text(font, trim(b.name, 18), sx + 7, sy + 7, 0xFFD4DCE2, false);
+                        int tx = sx + sw - 34;
+                        g.fill(tx, sy + 5, tx + 28, sy + 17, b.value ? 0xA9347459 : 0x60424A51);
+                        int kx = b.value ? tx + 17 : tx + 3;
+                        g.fill(kx, sy + 7, kx + 8, sy + 15, b.value ? 0xFFF1FFF7 : 0xFFB9C1C7);
                     } else if (setting instanceof NumSetting n) {
                         double ratio = (n.value - n.min) / Math.max(0.0001, n.max - n.min);
-                        g.text(font, trim(n.name, 12), sx + 5, sy + 3, 0xFFD5DDE4, false);
+                        g.text(font, trim(n.name, 15), sx + 7, sy + 5, 0xFFD4DCE2, false);
                         String value = n.display() + (Math.abs(n.value - n.defaultValue) > 1.0E-9 ? "*" : "");
-                        g.text(font, value, sx + sw - font.width(value) - 5, sy + 3, 0xFF9DD9FF, false);
-                        g.fill(sx + 4, sy + 15, sx + sw - 4, sy + 17, 0x55303C47);
-                        g.fill(sx + 4, sy + 15, sx + 4 + (int) ((sw - 8) * ratio), sy + 17, accent);
+                        g.text(font, value, sx + sw - font.width(value) - 7, sy + 5, 0xFF9DDCFA, false);
+                        g.fill(sx + 7, sy + 17, sx + sw - 7, sy + 19, 0x55505E68);
+                        g.fill(sx + 7, sy + 17, sx + 7 + (int) ((sw - 14) * ratio), sy + 19, accent);
                     }
                     if (hover) help = setting.description;
-                    sy += 19;
+                    sy += 24;
                 }
             }
 
-            // Fixed help/status footer avoids popups covering controls.
-            g.fill(x + 7, footerY, x + bw - 7, y + bh - 6, 0x3210151B);
-            String footerHelp = help + "  |  RMB setting/module = reset";
-            g.text(font, trim(footerHelp, 66), x + 11, footerY + 5, 0xFF82909B, false);
+            g.fill(x + 10, footerY, x + bw - 10, y + bh - 7, 0x4210171F);
+            String footer = trim(help, Math.max(40, (bw - 40) / 6));
+            g.text(font, footer, x + 15, footerY + 6, 0xFF7D8B96, false);
+            String hint = "LMB select/toggle  •  RMB reset";
+            g.text(font, hint, x + bw - font.width(hint) - 15, footerY + 6, 0xFF566671, false);
 
             super.extractRenderState(g, mx, my, delta);
+        }
+
+        private String renderMobSelector(GuiGraphicsExtractor g, int mx, int my, int sx, int sy, int sw, int sh,
+                                         MobListSetting ml, String help, int accent) {
+            List<String> ids = ml.ids();
+            int pages = Math.max(1, (ids.size() + MOB_PAGE_SIZE - 1) / MOB_PAGE_SIZE);
+            mobPage = Math.max(0, Math.min(mobPage, pages - 1));
+            g.fill(sx, sy, sx + sw, sy + sh, 0x3A111820);
+            g.fill(sx, sy, sx + sw, sy + 1, accent);
+            g.text(font, "MOB FILTER", sx + 7, sy + 7, 0xFFE4EAF0, true);
+            String count = ml.enabledCount() + "/" + ids.size();
+            g.text(font, count, sx + sw - font.width(count) - 7, sy + 7, 0xFF82DDB0, false);
+
+            int actionY = sy + 19;
+            int allX = sx + 7, noneX = allX + 39;
+            boolean allHover = in(mx, my, allX, actionY, 34, 15);
+            boolean noneHover = in(mx, my, noneX, actionY, 42, 15);
+            g.fill(allX, actionY, allX + 34, actionY + 15, allHover ? 0x72508365 : 0x49304E3E);
+            g.fill(noneX, actionY, noneX + 42, actionY + 15, noneHover ? 0x72744949 : 0x494B3232);
+            g.centeredText(font, "ALL", allX + 17, actionY + 5, 0xFFBFEBD4);
+            g.centeredText(font, "NONE", noneX + 21, actionY + 5, 0xFFF0B8B8);
+            if (allHover) help = "Allow every listed mob type";
+            if (noneHover) help = "Block every listed mob type";
+
+            String page = (mobPage + 1) + "/" + pages;
+            int pageX = sx + sw - 71;
+            g.fill(pageX, actionY, pageX + 18, actionY + 15, 0x49303B44);
+            g.fill(pageX + 53, actionY, pageX + 71, actionY + 15, 0x49303B44);
+            g.centeredText(font, "<", pageX + 9, actionY + 5, 0xFFB8C7D1);
+            g.centeredText(font, ">", pageX + 62, actionY + 5, 0xFFB8C7D1);
+            g.centeredText(font, page, pageX + 35, actionY + 5, 0xFF71818D);
+
+            int listY = sy + 39;
+            int gap = 5;
+            int cellW = (sw - 14 - gap) / 2;
+            int start = mobPage * MOB_PAGE_SIZE;
+            for (int i = 0; i < MOB_PAGE_SIZE; i++) {
+                int idx = start + i;
+                if (idx >= ids.size()) break;
+                String id = ids.get(idx);
+                int col = i % 2, row = i / 2;
+                int cx = sx + 7 + col * (cellW + gap);
+                int cy = listY + row * 22;
+                boolean on = ml.allows(id);
+                boolean hover = in(mx, my, cx, cy, cellW, 18);
+                g.fill(cx, cy, cx + cellW, cy + 18, on ? (hover ? 0x87507C64 : 0x5E315A47) : (hover ? 0x71603D3D : 0x47332228));
+                g.fill(cx + 5, cy + 7, cx + 9, cy + 11, on ? 0xFF75DDA8 : 0xFF80595D);
+                String label = MobListSetting.label(id);
+                g.text(font, trim(label, Math.max(8, (cellW - 20) / 6)), cx + 14, cy + 5, on ? 0xFFE2ECE6 : 0xFFB6A5A8, false);
+                if (hover) help = (on ? "Following allowed: " : "Following blocked: ") + label;
+            }
+            return help;
         }
 
         @Override
@@ -1207,82 +1354,108 @@ public final class EioClient implements ClientModInitializer {
             if (!leftClick && !rightClick) return super.mouseClicked(e, doubled);
 
             int bw = panelW(), bh = panelH(), x = panelX(), y = panelY();
-            int tabsX = x + 7, tabsY = y + 27;
-            int gap = 2;
-            int tabW = (bw - 14 - gap * (CATEGORIES.length - 1)) / CATEGORIES.length;
-            for (int i = 0; i < CATEGORIES.length; i++) {
-                int tx = tabsX + i * (tabW + gap);
-                if (in(e.x(), e.y(), tx, tabsY, tabW, 15)) {
-                    selectedCategory = CATEGORIES[i];
-                    selectedMod = firstInCategory(selectedCategory);
+            int bodyY = y + 39;
+            int footerY = y + bh - 25;
+            int railX = x + 10, railW = 98;
+            int modsX = railX + railW + 8, modsW = Math.min(198, Math.max(154, bw / 3 - 22));
+            int detailX = modsX + modsW + 8;
+            int detailW = x + bw - 10 - detailX;
+
+            int cy = bodyY + 23;
+            for (String category : CATEGORIES) {
+                if (leftClick && in(e.x(), e.y(), railX + 5, cy, railW - 10, 25)) {
+                    selectedCategory = category;
+                    selectedMod = firstInCategory(category);
+                    mobPage = 0;
                     return true;
                 }
+                cy += 28;
             }
 
-            int bodyY = y + 47;
-            int modulesX = x + 7;
-            int modulesW = 232;
-            int settingsX = modulesX + modulesW + 7;
-            int settingsW = x + bw - 7 - settingsX;
-            int cardGap = 4;
-            int cardW = (modulesW - 12 - cardGap) / 2;
-
-            int index = 0;
+            int myCard = bodyY + 23;
             for (Mod m : MODS) if (m.category.equals(selectedCategory)) {
-                int col = index % 2;
-                int row = index / 2;
-                int cx = modulesX + 4 + col * (cardW + cardGap);
-                int cy = bodyY + 5 + row * 24;
-                if (in(e.x(), e.y(), cx, cy, cardW, 20)) {
-                    selectedMod = m;
-                    if (leftClick) toggle(m);
-                    else if (rightClick) {
+                if (in(e.x(), e.y(), modsX + 5, myCard, modsW - 10, 20)) {
+                    if (leftClick) {
+                        if (selectedMod == m) toggle(m);
+                        else { selectedMod = m; mobPage = 0; }
+                    } else {
                         resetModuleSettings(m);
                         save();
                         notifyMessage(m.name + " settings reset", 0xFF9DD9FF, 1800L);
                     }
                     return true;
                 }
-                index++;
+                myCard += 22;
             }
 
             if (selectedMod != null) {
-                int sx = settingsX + 6;
-                int sw = settingsW - 12;
-                int sy = bodyY + 6;
-                if (leftClick && in(e.x(), e.y(), sx, sy, sw, 18)) {
-                    toggle(selectedMod);
-                    return true;
-                }
-                sy += 21;
-                if (leftClick && in(e.x(), e.y(), sx, sy, sw, 17)) {
+                int sx = detailX + 9, sw = detailW - 18, sy = bodyY + 8;
+                int toggleX = sx + sw - 42;
+                if (leftClick && in(e.x(), e.y(), toggleX, sy, 42, 19)) { toggle(selectedMod); return true; }
+                sy += 31;
+                if (leftClick && in(e.x(), e.y(), sx, sy, sw, 22)) {
                     Minecraft mc = Minecraft.getInstance();
                     mc.setScreenAndShow(new KeyBindsScreen(this, mc.options));
                     return true;
                 }
-                sy += 20;
+                sy += 42;
                 for (Setting setting : selectedMod.settings) {
-                    if (in(e.x(), e.y(), sx, sy, sw, 18)) {
+                    if (setting instanceof MobListSetting ml) {
+                        if (handleMobSelectorClick(e, leftClick, rightClick, sx, sy, sw, ml)) return true;
+                        break;
+                    }
+                    if (in(e.x(), e.y(), sx, sy, sw, 22)) {
                         if (rightClick) {
                             if (setting instanceof BoolSetting b) b.value = b.defaultValue;
                             else if (setting instanceof NumSetting n) n.set(n.defaultValue);
                         } else if (leftClick) {
-                            if (setting instanceof BoolSetting b) {
-                                b.value = !b.value;
-                            } else if (setting instanceof NumSetting n) {
-                                double ratio = (e.x() - (sx + 4.0)) / Math.max(1.0, sw - 8.0);
+                            if (setting instanceof BoolSetting b) b.value = !b.value;
+                            else if (setting instanceof NumSetting n) {
+                                double ratio = (e.x() - (sx + 7.0)) / Math.max(1.0, sw - 14.0);
                                 ratio = Math.max(0.0, Math.min(1.0, ratio));
                                 n.set(n.min + ratio * (n.max - n.min));
                             }
                         }
                         save();
+                        if (selectedMod.name.equals("Follow")) followTarget = null;
                         return true;
                     }
-                    sy += 19;
+                    sy += 24;
                 }
             }
-
             return super.mouseClicked(e, doubled);
+        }
+
+        private boolean handleMobSelectorClick(MouseButtonEvent e, boolean leftClick, boolean rightClick,
+                                               int sx, int sy, int sw, MobListSetting ml) {
+            List<String> ids = ml.ids();
+            int pages = Math.max(1, (ids.size() + MOB_PAGE_SIZE - 1) / MOB_PAGE_SIZE);
+            mobPage = Math.max(0, Math.min(mobPage, pages - 1));
+            int actionY = sy + 19;
+            int allX = sx + 7, noneX = allX + 39;
+            if (leftClick && in(e.x(), e.y(), allX, actionY, 34, 15)) { ml.setAll(true); followTarget = null; save(); return true; }
+            if (leftClick && in(e.x(), e.y(), noneX, actionY, 42, 15)) { ml.setAll(false); followTarget = null; save(); return true; }
+            int pageX = sx + sw - 71;
+            if (leftClick && in(e.x(), e.y(), pageX, actionY, 18, 15)) { mobPage = (mobPage - 1 + pages) % pages; return true; }
+            if (leftClick && in(e.x(), e.y(), pageX + 53, actionY, 18, 15)) { mobPage = (mobPage + 1) % pages; return true; }
+            if (rightClick && in(e.x(), e.y(), sx, sy, sw, 18)) { ml.reset(); mobPage = 0; followTarget = null; save(); return true; }
+
+            int gap = 5, cellW = (sw - 14 - gap) / 2, listY = sy + 39;
+            int start = mobPage * MOB_PAGE_SIZE;
+            for (int i = 0; i < MOB_PAGE_SIZE; i++) {
+                int idx = start + i;
+                if (idx >= ids.size()) break;
+                int col = i % 2, row = i / 2;
+                int cx = sx + 7 + col * (cellW + gap), cy = listY + row * 22;
+                if (leftClick && in(e.x(), e.y(), cx, cy, cellW, 18)) {
+                    String id = ids.get(idx);
+                    ml.set(id, !ml.allows(id));
+                    followTarget = null;
+                    save();
+                    return true;
+                }
+            }
+            return false;
         }
 
         static void drawRainbowBlockBrand(GuiGraphicsExtractor g, int x, int y, int scale) {
@@ -1295,27 +1468,21 @@ public final class EioClient implements ClientModInitializer {
                 float hue = ((now % 7000L) / 7000f + i * 0.065f) % 1f;
                 int rgb = 0xFF000000 | Color.HSBtoRGB(hue, 0.55f, 1.0f);
                 String[] pixels = pattern(c);
-                for (int row = 0; row < pixels.length; row++) {
-                    for (int col = 0; col < pixels[row].length(); col++) {
-                        if (pixels[row].charAt(col) == '#') {
-                            g.fill(px + col * scale, y + row * scale,
-                                    px + (col + 1) * scale, y + (row + 1) * scale, rgb);
-                        }
-                    }
-                }
+                for (int row = 0; row < pixels.length; row++) for (int col = 0; col < pixels[row].length(); col++)
+                    if (pixels[row].charAt(col) == '#') g.fill(px + col * scale, y + row * scale, px + (col + 1) * scale, y + (row + 1) * scale, rgb);
                 px += 4 * scale;
             }
         }
 
         private static int categoryColor(String category) {
             return switch (category) {
-                case "Combat" -> 0xFFE97979;
-                case "Movement" -> 0xFF6AC7F0;
-                case "Player" -> 0xFF79D69A;
-                case "Render" -> 0xFFC497F3;
-                case "World" -> 0xFFF0C778;
+                case "Combat" -> 0xFFE87979;
+                case "Movement" -> 0xFF67C8F2;
+                case "Player" -> 0xFF72D7A0;
+                case "Render" -> 0xFFC195F1;
+                case "World" -> 0xFFEEC36F;
                 case "Testing" -> 0xFFF09A68;
-                default -> 0xFF83B7D4;
+                default -> 0xFF82B8D6;
             };
         }
 
@@ -1334,19 +1501,9 @@ public final class EioClient implements ClientModInitializer {
         }
 
         private static String shortCat(String c) {
-            return switch (c) {
-                case "Movement" -> "Move";
-                case "Testing" -> "Test";
-                default -> c;
-            };
+            return switch (c) { case "Movement" -> "Movement"; case "Testing" -> "Testing"; default -> c; };
         }
-
-        private static boolean in(double mx, double my, int x, int y, int w, int h) {
-            return mx >= x && mx < x + w && my >= y && my < y + h;
-        }
-
-        private static String trim(String text, int max) {
-            return text.length() <= max ? text : text.substring(0, Math.max(0, max - 1)) + "…";
-        }
+        private static boolean in(double mx, double my, int x, int y, int w, int h) { return mx >= x && mx < x + w && my >= y && my < y + h; }
+        private static String trim(String text, int max) { return text.length() <= max ? text : text.substring(0, Math.max(0, max - 1)) + "…"; }
     }
 }
