@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.27.0";
-    public static final String BUILD_ID = "EIO-027-AREA1";
+    public static final String VERSION = "0.28.0";
+    public static final String BUILD_ID = "EIO-028-GROUND1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -249,8 +249,8 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the active Nuker target.");
         mod("Area Miner", "Mining", "Deterministic serpentine quarry: mines straight lanes from Corner A, clears the area in 5-block-deep stages, then descends to the next stage until the requested depth is complete.", -1)
-                .point("Corner A", "Starting corner. Stand at the surface start of the first lane and left-click this row. Right-click clears it.")
-                .point("Corner B", "Opposite horizontal corner of the area. Left-click this row while standing there. Right-click clears it.")
+                .point("Corner A", "Starting corner. Stand ON the surface block; Area Miner begins with the block directly under your feet. Right-click clears it.")
+                .point("Corner B", "Opposite corner. Stand ON its surface block; the block directly under your feet defines that edge. Right-click clears it.")
                 .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth to clear. Mining is completed in fixed 5-block stages from the surface downward.")
                 .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next block in the same lane cell.")
                 .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to acquire the current deterministic target before retrying it.")
@@ -885,9 +885,11 @@ public final class EioClient implements ClientModInitializer {
                         }
                         if (areaMineTarget != null) {
                             if (areaMiner.bool("Face Block").value) faceBlock(mc.player, areaMineTarget);
-                            boolean aimed = mc.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(areaMineTarget);
-                            if (aimed) {
-                                shouldForceAttack = true;
+                            if (mc.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(areaMineTarget)) {
+                                // Drive the same mapped game-mode destroy progression vanilla uses once the
+                                // crosshair is actually on the selected block. This avoids relying on a late
+                                // synthetic attack-key press to begin the first surface block.
+                                if (mc.gameMode != null) mc.gameMode.continueDestroyBlock(areaMineTarget, hit.getDirection());
                                 areaMineAimTicks = 0;
                                 areaAimFailures = 0;
                             } else if (++areaMineAimTicks >= Math.max(4, (int) Math.round(areaMiner.num("Aim Timeout").value))) {
