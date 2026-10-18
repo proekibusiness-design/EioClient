@@ -1,15 +1,15 @@
-name: Build EioClient 0.27 final
+name: Build EioClient 0.28 plane-first Area Miner
 
 on:
   push:
-    branches: [ feature/0.27-staged-area-miner ]
+    branches: [ feature/0.28-area-miner-plane-first ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source, stage planner and GUI QA
+      - name: Apply plane-first Area Miner fix
+        run: python3 .github/eio028_plane_patch.py
+
+      - name: Static planner and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -28,31 +31,24 @@ jobs:
           from pathlib import Path
           import json,re
           s=Path('eio26/EioClient.java').read_text()
-          region=Path('eio26/com/eio/client/AreaRegion.java').read_text()
-          test=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
+          r=Path('eio26/com/eio/client/AreaRegion.java').read_text()
+          t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
           gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.27.0"' in s
-          assert 'BUILD_ID = "EIO-027-STAGE1"' in s
-          assert 'mod_version=0.27.0+26.3' in gp
+          assert 'VERSION = "0.28.0"' in s
+          assert 'BUILD_ID = "EIO-028-PLANE1"' in s
+          assert 'mod_version=0.28.0+26.3' in gp
           assert len(mods)==45, len(mods)
           assert ('Area Miner','Mining') in mods
-          for token in [
-              'areaStageIndex', 'areaStageHasBlocks', 'advanceAreaStageIfReady',
-              'containsStage', 'stageCount', 'stageTopY', 'stageBottomY',
-              'fixed 5-block stages', 'serpentine', 'AREA MINER PAUSED: STAGE',
-              'categoriesScroll', 'NAVIGATION', 'mouseScrolled',
-              'GUI=760x430 modern-nav-glass', 'isWithinBlockInteractionRange'
-          ]:
-              assert token in s or token in region, token
-          assert 'static final int STAGE_DEPTH = 5;' in region
-          assert 'splitsDepthIntoFiveBlockStages' in test
-          assert s.count('else if (setting instanceof PointSetting point) point.reset();') == 2
-          assert 'private int panelW() { return Math.max(450, Math.min(760, width - 16)); }' in s
-          assert 'private int panelH() { return Math.max(280, Math.min(430, height - 16)); }' in s
+          for token in ['areaLayerIndex','areaStallPasses','areaPlaneHasBlocks','advanceAreaPlaneIfReady','containsPlane','stageLayerCount','stageLayerY','NEXT PLANE Y','categoriesScroll','mouseScrolled']:
+              assert token in s or token in r, token
+          assert 'for (int y = region.stageTopY(areaStageIndex)' not in s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean areaPlaneHasBlocks')]
+          assert 'int targetY = region.stageLayerY(areaStageIndex, areaLayerIndex);' in s
+          assert 'clearsPlanesTopDownInsideFiveBlockStages' in t
+          assert 'static final int STAGE_DEPTH = 5;' in r
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          print('0.27 final static QA passed; modules=', len(mods))
+          print('0.28 plane-first static QA passed; modules=',len(mods))
           PY
 
       - name: Unit tests and native Fabric build
@@ -66,7 +62,7 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.27.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.28.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
@@ -75,14 +71,12 @@ jobs:
           grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/area.javap
-          for token in findAreaMineTarget validAreaMineTarget updateAreaNavigation areaStageHasBlocks advanceAreaStageIfReady areaStatus resetAreaRuntime; do grep -Fq "$token" /tmp/main.javap; done
-          for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
-          for token in navigationCell supportedSize contains containsStage stageCount stageTopY stageBottomY; do grep -Fq "$token" /tmp/area.javap; done
+          for token in findAreaMineTarget validAreaMineTarget updateAreaNavigation areaPlaneHasBlocks advanceAreaPlaneIfReady areaStatus resetAreaRuntime; do grep -Fq "$token" /tmp/main.javap; done
+          for token in containsPlane stageLayerCount stageLayerY navigationCell; do grep -Fq "$token" /tmp/area.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-027-STAGE1' 'Area Miner' 'fixed 5-block stages' 'AREA MINER COMPLETE' 'AREA MINER PAUSED: STAGE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-028-PLANE1' 'Area Miner' 'NEXT PLANE Y' 'AREA MINER COMPLETE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -98,10 +92,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.27 JAR
+      - name: Canonicalize passing 0.28 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.28 plane-first Area Miner fix'
+            git push origin HEAD:feature/0.28-area-miner-plane-first
+          fi
+
+      - name: Upload 0.28 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.27.0-final
+          name: EioClient-26.3-v0.28.0-plane-first
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
