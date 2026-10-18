@@ -1,0 +1,1 @@
+Area Miner starts at the configured surface, excavates only within the selected X/Z rectangle, works exactly 5 vertical blocks at a time, completes the current 5-block slice in straight serpentine lanes, then descends by another 5 blocks until the configured depth is reached. No block above the configured surface is a valid Area Miner target.
