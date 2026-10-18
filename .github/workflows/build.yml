@@ -36,7 +36,7 @@ jobs:
           minecraft_version=26.3
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
-          loom_version=1.17
+          loom_version=1.17.21
           mod_version=0.4.0+26.3
           maven_group=com.eio
           archives_base_name=eioclient
@@ -148,23 +148,16 @@ jobs:
 
               private static void tick(Minecraft mc) {
                   if (mc.player == null) return;
-
-                  if (MODULES.get("AutoWalk")) {
-                      mc.options.keyUp.setDown(true);
-                  }
-
+                  if (MODULES.get("AutoWalk")) mc.options.keyUp.setDown(true);
                   if (MODULES.get("Sprint")) {
                       boolean hungry = mc.player.getFoodData().getFoodLevel() <= 6;
-                      if (mc.options.keyUp.isDown() && !hungry && !mc.player.horizontalCollision) {
-                          mc.player.setSprinting(true);
-                      }
+                      if (mc.options.keyUp.isDown() && !hungry && !mc.player.horizontalCollision) mc.player.setSprinting(true);
                   }
               }
 
               private static void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker deltaTracker) {
                   Minecraft mc = Minecraft.getInstance();
-                  if (!MODULES.get("HUD") || mc.player == null || mc.gui.hud.isHidden()) return;
-
+                  if (!MODULES.get("HUD") || mc.player == null) return;
                   int y = 4;
                   graphics.text(mc.font, "Eio Client 26.3", 4, y, 0xFFFFFFFF, true);
                   y += 11;
@@ -175,9 +168,7 @@ jobs:
               }
 
               private static String findModule(String input) {
-                  for (String name : MODULES.keySet()) {
-                      if (name.equalsIgnoreCase(input)) return name;
-                  }
+                  for (String name : MODULES.keySet()) if (name.equalsIgnoreCase(input)) return name;
                   return null;
               }
 
