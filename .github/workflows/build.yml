@@ -23,6 +23,9 @@ jobs:
       - name: Apply focused compatibility patch
         run: python3 .github/eio024_compat_patch.py
 
+      - name: Fix test runtime and Gradle resource configuration
+        run: python3 .github/eio024_testfix.py
+
       - name: Static source and project QA
         shell: bash
         run: |
@@ -44,7 +47,11 @@ jobs:
           assert 'onServerPositionCorrection' in s
           assert 'releaseCorrectionSensitiveState' in s
           assert 'getFlyingSpeed()' in s and 'flyPrevSpeed' in s and 'creativeAssistPrevSpeed' in s
-          assert 'org.junit.jupiter:junit-jupiter' in build and 'useJUnitPlatform()' in build
+          assert 'org.junit.jupiter:junit-jupiter' in build
+          assert 'testRuntimeOnly "org.junit.platform:junit-platform-launcher"' in build
+          assert 'useJUnitPlatform()' in build
+          assert 'def modVersion = project.version' in build
+          assert "expand version: project.version" not in build
           mixin=json.loads(Path('src/main/resources/eioclient.mixins.json').read_text())
           assert 'ClientPacketListenerMixin' in mixin['client']
           mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
