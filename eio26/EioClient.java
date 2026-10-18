@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.26.0";
-    public static final String BUILD_ID = "EIO-026-AREA2";
+    public static final String VERSION = "0.26.1";
+    public static final String BUILD_ID = "EIO-0261-MINEFIX1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -74,6 +74,9 @@ public final class EioClient implements ClientModInitializer {
     private static int areaMinedThisPass;
     private static boolean areaMoveRequested;
     private static boolean areaComplete;
+    private static BlockPos areaDestroyTarget;
+    private static boolean areaDestroyStarted;
+    private static int areaMineWorkTicks;
     private static final Set<BlockPos> AREA_MINE_SKIPPED = new HashSet<>();
     private static boolean attackForced;
     private static boolean toolSaverWarned;
@@ -251,6 +254,7 @@ public final class EioClient implements ClientModInitializer {
                 .num("Depth", 8.0, 1.0, 64.0, 1.0, "Vertical depth included in the selected zone. Area Miner only targets the current serpentine lane column instead of mining surrounding blocks.")
                 .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next area target.")
                 .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to line up with a target before temporarily skipping it.")
+                .num("Mine Timeout", 240.0, 40.0, 600.0, 20.0, "Maximum ticks to work one block before skipping it and continuing the lane.")
                 .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
                 .bool("Auto Move", true, "Walk the serpentine lane path after the block column directly ahead is clear.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating between cells.")
@@ -862,13 +866,17 @@ public final class EioClient implements ClientModInitializer {
                 } else {
                     if (areaMineTarget != null && mc.level.getBlockState(areaMineTarget).isAir()) {
                         areaMinedThisPass++;
+                        stopAreaDestroy(mc);
                         areaMineTarget = null;
                         areaMineAimTicks = 0;
+                        areaMineWorkTicks = 0;
                         areaMineRearmTicks = Math.max(1, (int) Math.round(areaMiner.num("Retarget Delay").value));
                     } else if (areaMineTarget != null && !validAreaMineTarget(mc, areaMiner, areaMineTarget)) {
+                        stopAreaDestroy(mc);
                         AREA_MINE_SKIPPED.add(areaMineTarget.immutable());
                         areaMineTarget = null;
                         areaMineAimTicks = 0;
+                        areaMineWorkTicks = 0;
                         areaMineRearmTicks = Math.max(1, (int) Math.round(areaMiner.num("Retarget Delay").value));
                     }
                     if (areaMineRearmTicks > 0) {
@@ -877,6 +885,7 @@ public final class EioClient implements ClientModInitializer {
                         if (areaMineTarget == null) {
                             areaMineTarget = findAreaMineTarget(mc, areaMiner);
                             areaMineAimTicks = 0;
+                            areaMineWorkTicks = 0;
                             if (areaMineTarget == null && !AREA_MINE_SKIPPED.isEmpty()) {
                                 AREA_MINE_SKIPPED.clear();
                                 areaMineTarget = findAreaMineTarget(mc, areaMiner);
@@ -884,15 +893,19 @@ public final class EioClient implements ClientModInitializer {
                         }
                         if (areaMineTarget != null) {
                             if (areaMiner.bool("Face Block").value) faceBlock(mc.player, areaMineTarget);
-                            boolean aimed = mc.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(areaMineTarget);
-                            if (aimed) {
-                                shouldForceAttack = true;
-                                areaMineAimTicks = 0;
-                            } else if (++areaMineAimTicks >= Math.max(4, (int) Math.round(areaMiner.num("Aim Timeout").value))) {
+                            areaMineAimTicks++;
+                            areaMineWorkTicks++;
+                            // The old implementation only held the key at END_CLIENT_TICK. That can miss
+                            // Minecraft's destroy-start window even though navigation still works. Drive
+                            // the normal MultiPlayerGameMode start/continue path instead.
+                            if (areaMineAimTicks >= 2) continueAreaDestroy(mc, areaMineTarget);
+                            if (areaMineWorkTicks >= Math.max(40, (int) Math.round(areaMiner.num("Mine Timeout").value))) {
+                                stopAreaDestroy(mc);
                                 AREA_MINE_SKIPPED.add(areaMineTarget.immutable());
                                 areaMineTarget = null;
                                 areaMineAimTicks = 0;
-                                areaMineRearmTicks = 1;
+                                areaMineWorkTicks = 0;
+                                areaMineRearmTicks = Math.max(1, (int) Math.round(areaMiner.num("Retarget Delay").value));
                             }
                         }
                     }
@@ -1013,9 +1026,11 @@ public final class EioClient implements ClientModInitializer {
                 }
             }
         } else {
+            stopAreaDestroy(mc);
             areaMineTarget = null;
             areaMineRearmTicks = 0;
             areaMineAimTicks = 0;
+            areaMineWorkTicks = 0;
             areaMoveRequested = false;
             chunkMineTarget = null;
             chunkMineRearmTicks = 0;
@@ -1158,6 +1173,9 @@ public final class EioClient implements ClientModInitializer {
 
     private static void resetAreaRuntime() {
         areaMineTarget = null;
+        areaDestroyTarget = null;
+        areaDestroyStarted = false;
+        areaMineWorkTicks = 0;
         areaMineRearmTicks = 0;
         areaMineAimTicks = 0;
         areaNavIndex = 0;
@@ -1166,6 +1184,36 @@ public final class EioClient implements ClientModInitializer {
         areaMoveRequested = false;
         areaComplete = false;
         AREA_MINE_SKIPPED.clear();
+    }
+
+    private static Direction areaMiningFace(Player player, BlockPos pos) {
+        double dx = player.getX() - (pos.getX() + 0.5);
+        double dy = player.getEyeY() - (pos.getY() + 0.5);
+        double dz = player.getZ() - (pos.getZ() + 0.5);
+        double ax = Math.abs(dx), ay = Math.abs(dy), az = Math.abs(dz);
+        if (ay >= ax && ay >= az) return dy >= 0.0 ? Direction.UP : Direction.DOWN;
+        if (ax >= az) return dx >= 0.0 ? Direction.EAST : Direction.WEST;
+        return dz >= 0.0 ? Direction.SOUTH : Direction.NORTH;
+    }
+
+    private static void continueAreaDestroy(Minecraft mc, BlockPos pos) {
+        if (mc.player == null || mc.gameMode == null || pos == null || !withinVanillaBlockRange(mc, pos)) return;
+        Direction face = areaMiningFace(mc.player, pos);
+        if (mc.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(pos)) face = hit.getDirection();
+        if (!areaDestroyStarted || areaDestroyTarget == null || !areaDestroyTarget.equals(pos)) {
+            if (areaDestroyStarted) mc.gameMode.stopDestroyBlock();
+            areaDestroyTarget = pos.immutable();
+            areaDestroyStarted = mc.gameMode.startDestroyBlock(areaDestroyTarget, face);
+        }
+        if (areaDestroyStarted) {
+            mc.gameMode.continueDestroyBlock(areaDestroyTarget, face);
+        }
+    }
+
+    private static void stopAreaDestroy(Minecraft mc) {
+        if (areaDestroyStarted && mc != null && mc.gameMode != null) mc.gameMode.stopDestroyBlock();
+        areaDestroyStarted = false;
+        areaDestroyTarget = null;
     }
 
     private static boolean validAreaMineTarget(Minecraft mc, Mod area, BlockPos pos) {
