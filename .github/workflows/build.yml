@@ -5,6 +5,7 @@ on:
     branches: [ main ]
     paths-ignore:
       - '.buildsrc/**'
+      - 'eioclient-legit-0.3.0.zip'
   workflow_dispatch:
 
 jobs:
@@ -22,136 +23,69 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Prepare Eio Client 0.15.0
+      - name: Static project QA
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf extracted
-          unzip -q eioclient-legit-0.3.0.zip -d extracted
-          cd extracted/eioclient
-
-          cat > gradle.properties <<'EOF'
-          org.gradle.jvmargs=-Xmx2G
-          minecraft_version=26.3
-          loader_version=0.19.5
-          fabric_api_version=0.163.0+26.3
-          loom_version=1.17.21
-          mod_version=0.15.0+26.3
-          maven_group=com.eio
-          archives_base_name=EioClient-26.3
-          EOF
-
-          cat > build.gradle <<'EOF'
-          plugins { id 'net.fabricmc.fabric-loom' version "${loom_version}" }
-          version = project.mod_version
-          group = project.maven_group
-          base { archivesName = project.archives_base_name }
-          dependencies {
-            minecraft "com.mojang:minecraft:${project.minecraft_version}"
-            implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-            implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
-          }
-          processResources { inputs.property "version", project.version }
-          tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
-          java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
-          EOF
-
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.15.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.15.0 advanced quality release with compact glass UI, recovery tools, diagnostics, stable inputs and expanded HUD/QoL modules'; d['authors']=['Eio']; d['environment']='client'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
-
-          rm -rf src/main/java/com/eio/client
-          mkdir -p src/main/java/com/eio/client
-          cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
-          cmp -s ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
-
-          mkdir -p src/main/resources/assets/eioclient/lang
-          cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
-          {
-            "key.category.eioclient.general": "Eio Client",
-            "key.eioclient.clickgui": "Open Eio ClickGUI",
-            "key.eioclient.kill_aura": "Kill Aura",
-            "key.eioclient.auto_clicker": "Auto Clicker",
-            "key.eioclient.sprint": "Sprint",
-            "key.eioclient.autowalk": "Auto Walk",
-            "key.eioclient.follow": "Follow",
-            "key.eioclient.fly": "Fly",
-            "key.eioclient.safewalk": "Safe Walk",
-            "key.eioclient.auto_jump": "Auto Jump",
-            "key.eioclient.auto_swim": "Auto Swim",
-            "key.eioclient.auto_respawn": "Auto Respawn",
-            "key.eioclient.low_health_alert": "Low Health Alert",
-            "key.eioclient.inventory_info": "Inventory Info",
-            "key.eioclient.durability_hud": "Durability HUD",
-            "key.eioclient.coordinates": "Coordinates",
-            "key.eioclient.fps": "FPS",
-            "key.eioclient.active_modules": "Active Modules",
-            "key.eioclient.target_hud": "Target HUD",
-            "key.eioclient.health": "Health",
-            "key.eioclient.speed": "Speed",
-            "key.eioclient.facing": "Facing",
-            "key.eioclient.rotation": "Rotation",
-            "key.eioclient.memory": "Memory",
-            "key.eioclient.clock": "Clock",
-            "key.eioclient.fullbright": "Fullbright",
-            "key.eioclient.chunk_info": "Chunk Info",
-            "key.eioclient.waypoints": "Waypoints",
-            "key.eioclient.test_profile": "Test Profile",
-            "key.eioclient.session_info": "Session Info",
-            "key.eioclient.session_timer": "Session Timer",
-            "key.eioclient.notifications": "Notifications"
-          }
-          EOF
-
-      - name: Static source QA
-        shell: bash
-        run: |
-          set -euo pipefail
-          SRC=eio26/EioClient.java
-          test -s "$SRC"
-          grep -Fq 'VERSION = "0.15.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-015-QA1"' "$SRC"
-          grep -Fq 'MOD_INDEX' "$SRC"
-          grep -Fq 'validateModel()' "$SRC"
-          grep -Fq 'literal("panic")' "$SRC"
-          grep -Fq 'literal("resetsettings")' "$SRC"
-          grep -Fq 'literal("reloadconfig")' "$SRC"
-          grep -Fq 'forwardForced' "$SRC"
-          grep -Fq 'flyForced' "$SRC"
-          grep -Fq 'configSource' "$SRC"
-          grep -Fq 'Require Attack' "$SRC"
-          grep -Fq 'Low Health Alert' "$SRC"
-          grep -Fq 'Rotation' "$SRC"
-          grep -Fq 'Memory' "$SRC"
-          grep -Fq 'Clock' "$SRC"
-          grep -Fq 'Math.min(438' "$SRC"
-          grep -Fq 'Math.min(254' "$SRC"
-          grep -Fq 'drawRainbowBlockBrand' "$SRC"
-          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 30
-          if grep -Fq 'getDayTime()' "$SRC"; then echo 'Unverified world-time API found'; exit 1; fi
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then echo 'Versioned keybind ID found'; exit 1; fi
-          if grep -Eq 'TODO|FIXME' "$SRC"; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
+          test -s settings.gradle
+          test -s build.gradle
+          test -s gradle.properties
+          test -s eio26/EioClient.java
+          test -s src/main/resources/fabric.mod.json
+          test -s src/main/resources/assets/eioclient/lang/en_us.json
+          grep -Fq 'minecraft_version=26.3' gradle.properties
+          grep -Fq 'mod_version=0.15.0+26.3' gradle.properties
+          grep -Fq "java.srcDirs = ['eio26']" build.gradle
+          grep -Fq 'reproducibleFileOrder = true' build.gradle
+          grep -Fq 'VERSION = "0.15.0"' eio26/EioClient.java
+          grep -Fq 'BUILD_ID = "EIO-015-QA1"' eio26/EioClient.java
+          grep -Fq 'MOD_INDEX' eio26/EioClient.java
+          grep -Fq 'validateModel()' eio26/EioClient.java
+          grep -Fq 'literal("panic")' eio26/EioClient.java
+          grep -Fq 'literal("resetsettings")' eio26/EioClient.java
+          grep -Fq 'literal("reloadconfig")' eio26/EioClient.java
+          grep -Fq 'forwardForced' eio26/EioClient.java
+          grep -Fq 'flyForced' eio26/EioClient.java
+          grep -Fq 'configSource' eio26/EioClient.java
+          grep -Fq 'Require Attack' eio26/EioClient.java
+          grep -Fq 'Low Health Alert' eio26/EioClient.java
+          grep -Fq 'Rotation' eio26/EioClient.java
+          grep -Fq 'Memory' eio26/EioClient.java
+          grep -Fq 'Clock' eio26/EioClient.java
+          grep -Fq 'Math.min(438' eio26/EioClient.java
+          grep -Fq 'Math.min(254' eio26/EioClient.java
+          grep -Fq 'drawRainbowBlockBrand' eio26/EioClient.java
+          test "$(grep -c '^[[:space:]]*mod("' eio26/EioClient.java)" -eq 30
+          if grep -Fq 'getDayTime()' eio26/EioClient.java; then echo 'Unverified world-time API found'; exit 1; fi
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' eio26/EioClient.java; then echo 'Versioned keybind ID found'; exit 1; fi
+          if grep -Eq 'TODO|FIXME' eio26/EioClient.java; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import json,re
           s=Path('eio26/EioClient.java').read_text()
-          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"', s, re.M)
+          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"',s,re.M)
           names=[n for n,_ in mods]
+          allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
           assert len(mods)==30
           assert len(names)==len(set(n.lower() for n in names))
-          allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
           assert all(c in allowed for _,c in mods)
-          print('Canonical model QA:', len(mods), 'modules /', len(allowed), 'categories')
+          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
+          expected={'key.eioclient.'+re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',n.lower())) for n in names}
+          expected.add('key.eioclient.clickgui')
+          missing=sorted(expected-set(lang))
+          assert not missing, f'missing language keys: {missing}'
+          print(f'Project model QA: {len(mods)} modules / {len(allowed)} categories / {len(lang)} language entries')
           PY
-          echo "Canonical source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
+          echo "Source SHA256: $(sha256sum eio26/EioClient.java | awk '{print $1}')"
 
-      - name: Build
-        working-directory: extracted/eioclient
+      - name: Build native project
         run: gradle clean build --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
         run: |
           set -euo pipefail
-          JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
+          JAR=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
@@ -177,15 +111,26 @@ jobs:
           if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
           SIZE=$(stat -c%s "$JAR")
           test "$SIZE" -gt 22000
-          echo "Direct-source QA passed: $JAR"
+          echo "Native-project QA passed: $JAR"
           echo "Size: $SIZE bytes"
           echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+
+      - name: Reproducibility check
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIRST=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
+          cp "$FIRST" /tmp/eio-first.jar
+          gradle clean build --quiet
+          SECOND=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
+          cmp -s /tmp/eio-first.jar "$SECOND"
+          echo "Reproducible JAR SHA256: $(sha256sum "$SECOND" | awk '{print $1}')"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.15.0-direct
+          name: EioClient-26.3-v0.15.0-native
           path: |
-            extracted/eioclient/build/libs/*.jar
-            !extracted/eioclient/build/libs/*-sources.jar
+            build/libs/*.jar
+            !build/libs/*-sources.jar
           if-no-files-found: error
