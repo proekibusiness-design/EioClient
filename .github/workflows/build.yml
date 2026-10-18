@@ -1,15 +1,15 @@
-name: Build EioClient 0.28 final
+name: Build EioClient 0.29 crosshair Area Miner
 
 on:
   push:
-    branches: [ feature/0.28-area-miner-plane-first ]
+    branches: [ feature/0.29-area-miner-crosshair ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static planner and GUI QA
+      - name: Apply deterministic crosshair miner patch
+        run: python3 .github/eio029_crosshair_patch.py
+
+      - name: Static lane and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -32,21 +35,24 @@ jobs:
           t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
           gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.28.0"' in s
-          assert 'BUILD_ID = "EIO-028-PLANE1"' in s
-          assert 'mod_version=0.28.0+26.3' in gp
+          assert 'VERSION = "0.29.0"' in s
+          assert 'BUILD_ID = "EIO-029-LANE1"' in s
+          assert 'mod_version=0.29.0+26.3' in gp
           assert len(mods)==45, len(mods)
           assert ('Area Miner','Mining') in mods
-          for token in ['areaLayerIndex','areaStallPasses','areaPlaneHasBlocks','advanceAreaPlaneIfReady','containsPlane','stageLayerCount','stageLayerY','NEXT PLANE Y','categoriesScroll','mouseScrolled']:
-              assert token in s or token in r, token
-          finder=s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean areaPlaneHasBlocks')]
-          assert 'for (int y = region.stageTopY(areaStageIndex)' not in finder
-          assert 'int targetY = region.stageLayerY(areaStageIndex, areaLayerIndex);' in finder
+          for token in ['currentAreaLaneCell','currentAreaLookTarget','advanceAreaPlaneIfReady','areaPlaneHasBlocks','categoriesScroll','mouseScrolled']:
+              assert token in s, token
+          assert 'findAreaMineTarget' not in s
+          assert 'BlockPos looked = currentAreaLookTarget(mc, areaMiner);' in s
+          assert 'shouldForceAttack = true;' in s
+          assert 'return area.bool("Auto Move").value && distance > 0.45;' in s
+          assert 'Retarget Delay' not in s[s.index('mod("Area Miner"'):s.index('mod("Tool Saver"')]
+          assert 'Aim Timeout' not in s[s.index('mod("Area Miner"'):s.index('mod("Tool Saver"')]
           assert 'clearsPlanesTopDownInsideFiveBlockStages' in t
           assert 'static final int STAGE_DEPTH = 5;' in r
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          print('0.28 final static QA passed; modules=',len(mods))
+          print('0.29 static QA passed; modules=',len(mods))
           PY
 
       - name: Unit tests and native Fabric build
@@ -60,7 +66,7 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.28.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.29.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
@@ -69,12 +75,10 @@ jobs:
           grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/area.javap
-          for token in findAreaMineTarget validAreaMineTarget updateAreaNavigation areaPlaneHasBlocks advanceAreaPlaneIfReady areaStatus resetAreaRuntime; do grep -Fq "$token" /tmp/main.javap; done
-          for token in containsPlane stageLayerCount stageLayerY navigationCell; do grep -Fq "$token" /tmp/area.javap; done
+          for token in currentAreaLaneCell currentAreaLookTarget updateAreaNavigation areaPlaneHasBlocks advanceAreaPlaneIfReady areaStatus resetAreaRuntime; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-028-PLANE1' 'Area Miner' 'NEXT PLANE Y' 'AREA MINER COMPLETE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-029-LANE1' 'Area Miner' 'LANE BLOCK NOT CLEARING' 'CANNOT REACH LANE' 'AREA MINER COMPLETE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -90,10 +94,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.28 JAR
+      - name: Canonicalize passing 0.29 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.29 deterministic crosshair Area Miner'
+            git push origin HEAD:feature/0.29-area-miner-crosshair
+          fi
+
+      - name: Upload 0.29 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.28.0-final
+          name: EioClient-26.3-v0.29.0-crosshair
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
