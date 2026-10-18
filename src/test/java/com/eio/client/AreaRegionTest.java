@@ -56,6 +56,22 @@ final class AreaRegionTest {
     }
 
     @Test
+    void clearsPlanesTopDownInsideFiveBlockStages() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 12);
+        assertEquals(5, r.stageLayerCount(0));
+        assertEquals(70, r.stageLayerY(0, 0));
+        assertEquals(69, r.stageLayerY(0, 1));
+        assertEquals(66, r.stageLayerY(0, 4));
+        assertEquals(65, r.stageLayerY(1, 0));
+        assertEquals(61, r.stageLayerY(1, 4));
+        assertEquals(2, r.stageLayerCount(2));
+        assertEquals(60, r.stageLayerY(2, 0));
+        assertEquals(59, r.stageLayerY(2, 1));
+        assertTrue(r.containsPlane(new BlockPos(1, 69, 1), 0, 1));
+        assertFalse(r.containsPlane(new BlockPos(1, 68, 1), 0, 1));
+    }
+
+    @Test
     void rejectsOversizedNavigationArea() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(AreaRegion.MAX_SIDE, 64, 0), 1);
         assertNotNull(r);

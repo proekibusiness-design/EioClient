@@ -47,6 +47,16 @@ final class AreaRegion {
         return Math.max(bottomY, stageTopY(stage) - STAGE_DEPTH + 1);
     }
 
+    int stageLayerCount(int stage) {
+        return stageTopY(stage) - stageBottomY(stage) + 1;
+    }
+
+    int stageLayerY(int stage, int layer) {
+        int count = stageLayerCount(stage);
+        int safeLayer = Math.max(0, Math.min(Math.max(0, count - 1), layer));
+        return stageTopY(stage) - safeLayer;
+    }
+
     boolean supportedSize() {
         return width() > 0 && length() > 0 && width() <= MAX_SIDE && length() <= MAX_SIDE;
     }
@@ -66,6 +76,10 @@ final class AreaRegion {
     boolean containsStage(BlockPos pos, int stage) {
         return contains(pos) && stage >= 0 && stage < stageCount()
                 && pos.getY() <= stageTopY(stage) && pos.getY() >= stageBottomY(stage);
+    }
+
+    boolean containsPlane(BlockPos pos, int stage, int layer) {
+        return containsStage(pos, stage) && pos.getY() == stageLayerY(stage, layer);
     }
 
     int clampX(double x) { return Math.max(minX, Math.min(maxX, (int) Math.floor(x))); }

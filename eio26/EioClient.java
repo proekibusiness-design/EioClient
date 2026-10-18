@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.27.0";
-    public static final String BUILD_ID = "EIO-027-STAGE1";
+    public static final String VERSION = "0.28.0";
+    public static final String BUILD_ID = "EIO-028-PLANE1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -71,6 +71,8 @@ public final class EioClient implements ClientModInitializer {
     private static int areaMineAimTicks;
     private static int areaNavIndex;
     private static int areaStageIndex;
+    private static int areaLayerIndex;
+    private static int areaStallPasses;
     private static int areaMoveTicks;
     private static int areaMinedThisPass;
     private static boolean areaMoveRequested;
@@ -246,7 +248,7 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Exposed Only", true, "Only target blocks with at least one exposed face.")
                 .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the active Nuker target.");
-        mod("Area Miner", "Mining", "Clears a selected rectangle in serpentine tunnel lanes, finishing each 5-block-deep stage before descending to the next one.", -1)
+        mod("Area Miner", "Mining", "Clears one full horizontal plane at a time in serpentine lanes; five planes form a stage before the next 5-block stage begins.", -1)
                 .point("Corner A", "Stand at the first horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .point("Corner B", "Stand at the opposite horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth below the surface. Area Miner processes this in fixed 5-block stages.")
@@ -256,7 +258,7 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Auto Move", true, "Move through each lane of the configured rectangle after clearing the blocks immediately ahead.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating through a cleared lane.")
                 .bool("Auto Jump", true, "Jump over simple one-block obstacles while Area Miner is moving.")
-                .bool("Exposed Only", true, "Mine only exposed blocks; each 5-block stage is revisited until it is completely clear.")
+                .bool("Exposed Only", true, "Mine only exposed blocks; each horizontal plane is revisited until it is completely clear.")
                 .bool("Face Block", true, "Turn your view toward the current straight-ahead Area Miner target.");
         mod("Tool Saver", "Mining", "Stops Eio mining automation before the held damageable tool reaches the configured remaining durability.", -1)
                 .num("Remaining", 12.0, 1.0, 100.0, 1.0, "Minimum durability to keep in reserve.")
@@ -1155,8 +1157,11 @@ public final class EioClient implements ClientModInitializer {
         if (region == null) return "Area Miner: set Corner A and Corner B";
         if (!region.supportedSize()) return "Area Miner: maximum supported area is " + AreaRegion.MAX_SIDE + "x" + AreaRegion.MAX_SIDE;
         int stage = Math.max(0, Math.min(areaStageIndex, region.stageCount() - 1));
+        int layers = region.stageLayerCount(stage);
+        int layer = Math.max(0, Math.min(areaLayerIndex, Math.max(0, layers - 1)));
+        int planeY = region.stageLayerY(stage, layer);
         String stageText = "stage " + (stage + 1) + "/" + region.stageCount()
-                + " Y " + region.stageTopY(stage) + ".." + region.stageBottomY(stage);
+                + " | layer " + (layer + 1) + "/" + layers + " Y=" + planeY;
         return "Area Miner: " + region.summary() + " | " + stageText
                 + (areaComplete ? " | complete" : " | lane " + (Math.min(areaNavIndex, Math.max(0, region.navigationCells() - 1)) + 1) + "/" + region.navigationCells());
     }
@@ -1167,6 +1172,8 @@ public final class EioClient implements ClientModInitializer {
         areaMineAimTicks = 0;
         areaNavIndex = 0;
         areaStageIndex = 0;
+        areaLayerIndex = 0;
+        areaStallPasses = 0;
         areaMoveTicks = 0;
         areaMinedThisPass = 0;
         areaMoveRequested = false;
@@ -1177,7 +1184,7 @@ public final class EioClient implements ClientModInitializer {
     private static boolean validAreaMineTarget(Minecraft mc, Mod area, BlockPos pos) {
         if (mc.player == null || mc.level == null || pos == null) return false;
         AreaRegion region = areaRegion(area);
-        if (region == null || !region.supportedSize() || !region.containsStage(pos, areaStageIndex)) return false;
+        if (region == null || !region.supportedSize() || !region.containsPlane(pos, areaStageIndex, areaLayerIndex)) return false;
         if (!withinVanillaBlockRange(mc, pos)) return false;
         var state = mc.level.getBlockState(pos);
         if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
@@ -1191,71 +1198,93 @@ public final class EioClient implements ClientModInitializer {
         int cells = region.navigationCells();
         if (cells <= 0) return null;
         int baseIndex = Math.max(0, Math.min(areaNavIndex, cells - 1));
+        int targetY = region.stageLayerY(areaStageIndex, areaLayerIndex);
         BlockPos best = null;
         double bestScore = Double.MAX_VALUE;
-        int lookAhead = Math.min(3, cells - baseIndex);
+        int lookAhead = Math.min(4, cells - baseIndex);
+        int playerX = (int) Math.floor(mc.player.getX());
+        int playerZ = (int) Math.floor(mc.player.getZ());
+        int playerFloorY = (int) Math.floor(mc.player.getY()) - 1;
         for (int step = 0; step < lookAhead; step++) {
-            BlockPos lane = region.navigationCell(baseIndex + step, mc.player.blockPosition().getY());
+            BlockPos lane = region.navigationCell(baseIndex + step, targetY);
             if (lane == null) continue;
-            for (int y = region.stageTopY(areaStageIndex); y >= region.stageBottomY(areaStageIndex); y--) {
-                BlockPos pos = new BlockPos(lane.getX(), y, lane.getZ());
-                if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
-                double dx = pos.getX() + 0.5 - mc.player.getX();
-                double dy = pos.getY() + 0.5 - mc.player.getEyeY();
-                double dz = pos.getZ() + 0.5 - mc.player.getZ();
-                double score = step * 1000.0 + dx * dx + dy * dy + dz * dz;
-                if (score < bestScore) { bestScore = score; best = pos.immutable(); }
-            }
+            BlockPos pos = new BlockPos(lane.getX(), targetY, lane.getZ());
+            if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
+            // Do not choose the supporting block directly under the player while other lane blocks exist.
+            if (pos.getX() == playerX && pos.getZ() == playerZ && pos.getY() <= playerFloorY) continue;
+            double dx = pos.getX() + 0.5 - mc.player.getX();
+            double dy = pos.getY() + 0.5 - mc.player.getEyeY();
+            double dz = pos.getZ() + 0.5 - mc.player.getZ();
+            double score = step * 1000.0 + dx * dx + dy * dy + dz * dz;
+            if (score < bestScore) { bestScore = score; best = pos.immutable(); }
         }
         return best;
     }
 
-    private static boolean areaStageHasBlocks(Minecraft mc, Mod area, AreaRegion region, int stage) {
+    private static boolean areaPlaneHasBlocks(Minecraft mc, Mod area, AreaRegion region, int stage, int layer) {
         if (mc.level == null || region == null || stage < 0 || stage >= region.stageCount()) return false;
-        for (int y = region.stageTopY(stage); y >= region.stageBottomY(stage); y--) {
-            for (int z = region.minZ; z <= region.maxZ; z++) {
-                for (int x = region.minX; x <= region.maxX; x++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    var state = mc.level.getBlockState(pos);
-                    if (!state.isAir() && state.getDestroySpeed(mc.level, pos) >= 0.0f) return true;
-                }
+        int y = region.stageLayerY(stage, layer);
+        for (int z = region.minZ; z <= region.maxZ; z++) {
+            for (int x = region.minX; x <= region.maxX; x++) {
+                BlockPos pos = new BlockPos(x, y, z);
+                var state = mc.level.getBlockState(pos);
+                if (!state.isAir() && state.getDestroySpeed(mc.level, pos) >= 0.0f) return true;
             }
         }
         return false;
     }
 
-    private static boolean advanceAreaStageIfReady(Minecraft mc, Mod area, AreaRegion region) {
+    private static boolean advanceAreaPlaneIfReady(Minecraft mc, Mod area, AreaRegion region) {
         if (areaNavIndex < region.navigationCells()) return false;
         if (areaMinedThisPass > 0) {
             areaNavIndex = 0;
             areaMinedThisPass = 0;
+            areaStallPasses = 0;
             areaMoveTicks = 0;
             AREA_MINE_SKIPPED.clear();
             return true;
         }
-        if (areaStageHasBlocks(mc, area, region, areaStageIndex)) {
+        if (areaPlaneHasBlocks(mc, area, region, areaStageIndex, areaLayerIndex)) {
+            if (areaStallPasses++ < 2) {
+                areaNavIndex = 0;
+                areaMoveTicks = 0;
+                AREA_MINE_SKIPPED.clear();
+                return true;
+            }
+            int y = region.stageLayerY(areaStageIndex, areaLayerIndex);
             area.enabled = false;
             save();
-            notifyMessage("AREA MINER PAUSED: STAGE " + (areaStageIndex + 1) + " HAS UNREACHABLE BLOCKS", 0xFFFFB36B, 4200L);
-            appendDiagnostic("AREA_MINER stalled stage=" + (areaStageIndex + 1));
+            notifyMessage("AREA MINER PAUSED: Y " + y + " HAS UNREACHABLE BLOCKS", 0xFFFFB36B, 4200L);
+            appendDiagnostic("AREA_MINER stalled stage=" + (areaStageIndex + 1) + " layer=" + (areaLayerIndex + 1) + " y=" + y);
             return true;
         }
-        areaStageIndex++;
+
+        areaLayerIndex++;
         areaNavIndex = 0;
         areaMoveTicks = 0;
         areaMinedThisPass = 0;
+        areaStallPasses = 0;
         areaMineTarget = null;
         areaMineAimTicks = 0;
         areaMineRearmTicks = 1;
         AREA_MINE_SKIPPED.clear();
-        if (areaStageIndex >= region.stageCount()) {
-            areaComplete = true;
-            area.enabled = false;
-            save();
-            notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3200L);
+
+        if (areaLayerIndex >= region.stageLayerCount(areaStageIndex)) {
+            areaStageIndex++;
+            areaLayerIndex = 0;
+            if (areaStageIndex >= region.stageCount()) {
+                areaComplete = true;
+                area.enabled = false;
+                save();
+                notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3200L);
+                return true;
+            }
+            notifyMessage("AREA MINER: STARTING STAGE " + (areaStageIndex + 1) + "/" + region.stageCount()
+                    + " AT Y " + region.stageLayerY(areaStageIndex, 0), 0xFF74C8F0, 2400L);
             return true;
         }
-        notifyMessage("AREA MINER: STARTING STAGE " + (areaStageIndex + 1) + "/" + region.stageCount(), 0xFF74C8F0, 2200L);
+
+        notifyMessage("AREA MINER: NEXT PLANE Y " + region.stageLayerY(areaStageIndex, areaLayerIndex), 0xFF74C8F0, 1400L);
         return true;
     }
 
@@ -1280,8 +1309,8 @@ public final class EioClient implements ClientModInitializer {
             goalX = region.clampX(px) + 0.5;
             goalZ = region.clampZ(pz) + 0.5;
         } else {
-            if (advanceAreaStageIfReady(mc, area, region)) return false;
-            BlockPos nav = region.navigationCell(areaNavIndex, mc.player.blockPosition().getY());
+            if (advanceAreaPlaneIfReady(mc, area, region)) return false;
+            BlockPos nav = region.navigationCell(areaNavIndex, region.stageLayerY(areaStageIndex, areaLayerIndex));
             if (nav == null) return false;
             goalX = nav.getX() + 0.5;
             goalZ = nav.getZ() + 0.5;
