@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.26.0";
-    public static final String BUILD_ID = "EIO-026-AREA1";
+    public static final String VERSION = "0.27.0";
+    public static final String BUILD_ID = "EIO-027-FASTAREA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -72,6 +72,7 @@ public final class EioClient implements ClientModInitializer {
     private static int areaNavIndex;
     private static int areaMoveTicks;
     private static int areaMinedThisPass;
+    private static int areaLayerIndex;
     private static boolean areaMoveRequested;
     private static boolean areaComplete;
     private static final Set<BlockPos> AREA_MINE_SKIPPED = new HashSet<>();
@@ -248,10 +249,11 @@ public final class EioClient implements ClientModInitializer {
         mod("Area Miner", "Mining", "Mines a user-defined rectangular area to a chosen depth and can move through the selected coordinates.", -1)
                 .point("Corner A", "Stand at the first horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .point("Corner B", "Stand at the opposite horizontal corner and left-click this row to set it here. Right-click clears it.")
-                .num("Depth", 8.0, 1.0, 64.0, 1.0, "Number of blocks to mine downward from the higher corner Y level.")
-                .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next area target.")
-                .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to line up with a target before temporarily skipping it.")
-                .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
+                .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth to mine downward from the surface.")
+                .num("Layer Height", 5.0, 1.0, 10.0, 1.0, "Clear the area in top-down slices. Default is five blocks per layer.")
+                .num("Retarget Delay", 1.0, 1.0, 3.0, 1.0, "Ticks used for the required attack-key release between blocks.")
+                .num("Aim Timeout", 3.0, 2.0, 12.0, 1.0, "Fast fallback timeout when a selected block cannot actually be acquired by the crosshair.")
+                .num("Move Timeout", 70.0, 20.0, 180.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
                 .bool("Auto Move", true, "Move through the configured rectangle when no mineable block is currently in normal interaction range.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating between cells.")
                 .bool("Auto Jump", true, "Jump over simple one-block obstacles while Area Miner is moving.")
@@ -889,7 +891,7 @@ public final class EioClient implements ClientModInitializer {
                             if (aimed) {
                                 shouldForceAttack = true;
                                 areaMineAimTicks = 0;
-                            } else if (++areaMineAimTicks >= Math.max(4, (int) Math.round(areaMiner.num("Aim Timeout").value))) {
+                            } else if (++areaMineAimTicks >= Math.max(2, (int) Math.round(areaMiner.num("Aim Timeout").value))) {
                                 AREA_MINE_SKIPPED.add(areaMineTarget.immutable());
                                 areaMineTarget = null;
                                 areaMineAimTicks = 0;
@@ -1150,11 +1152,36 @@ public final class EioClient implements ClientModInitializer {
         return region != null && region.supportedSize();
     }
 
+    private static int areaLayerHeight(Mod area) {
+        return Math.max(1, (int) Math.round(area.num("Layer Height").value));
+    }
+
+    private static int areaLayerCount(AreaRegion region, Mod area) {
+        int height = areaLayerHeight(area);
+        return Math.max(1, (region.depth() + height - 1) / height);
+    }
+
+    private static int areaLayerTop(AreaRegion region, Mod area) {
+        return Math.max(region.bottomY, region.topY - areaLayerIndex * areaLayerHeight(area));
+    }
+
+    private static int areaLayerBottom(AreaRegion region, Mod area) {
+        return Math.max(region.bottomY, areaLayerTop(region, area) - areaLayerHeight(area) + 1);
+    }
+
+    private static boolean inActiveAreaLayer(AreaRegion region, Mod area, BlockPos pos) {
+        return pos.getY() <= areaLayerTop(region, area) && pos.getY() >= areaLayerBottom(region, area);
+    }
+
     private static String areaStatus(Mod area) {
         AreaRegion region = areaRegion(area);
         if (region == null) return "Area Miner: set Corner A and Corner B";
         if (!region.supportedSize()) return "Area Miner: maximum supported area is " + AreaRegion.MAX_SIDE + "x" + AreaRegion.MAX_SIDE;
-        return "Area Miner: " + region.summary() + (areaComplete ? " | complete" : " | nav " + (areaNavIndex + 1) + "/" + region.navigationCells());
+        int layers = areaLayerCount(region, area);
+        String layer = " | layer " + Math.min(areaLayerIndex + 1, layers) + "/" + layers
+                + " Y " + areaLayerTop(region, area) + ".." + areaLayerBottom(region, area);
+        return "Area Miner: " + region.summary() + layer
+                + (areaComplete ? " | complete" : " | nav " + (areaNavIndex + 1) + "/" + region.navigationCells());
     }
 
     private static void resetAreaRuntime() {
@@ -1164,6 +1191,7 @@ public final class EioClient implements ClientModInitializer {
         areaNavIndex = 0;
         areaMoveTicks = 0;
         areaMinedThisPass = 0;
+        areaLayerIndex = 0;
         areaMoveRequested = false;
         areaComplete = false;
         AREA_MINE_SKIPPED.clear();
@@ -1173,20 +1201,49 @@ public final class EioClient implements ClientModInitializer {
         if (mc.player == null || mc.level == null || pos == null) return false;
         AreaRegion region = areaRegion(area);
         if (region == null || !region.supportedSize() || !region.contains(pos)) return false;
+        if (!inActiveAreaLayer(region, area, pos)) return false;
         if (!withinVanillaBlockRange(mc, pos)) return false;
         var state = mc.level.getBlockState(pos);
         if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
         return !area.bool("Exposed Only").value || isExposedBlock(mc, pos);
     }
 
+    private static double wrappedDegrees(double degrees) {
+        double wrapped = degrees % 360.0;
+        if (wrapped > 180.0) wrapped -= 360.0;
+        if (wrapped < -180.0) wrapped += 360.0;
+        return wrapped;
+    }
+
+    private static double blockAimError(Player player, BlockPos pos) {
+        double dx = pos.getX() + 0.5 - player.getX();
+        double dz = pos.getZ() + 0.5 - player.getZ();
+        double dy = pos.getY() + 0.5 - player.getEyeY();
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        double targetYaw = Math.toDegrees(Math.atan2(dz, dx)) - 90.0;
+        double targetPitch = -Math.toDegrees(Math.atan2(dy, Math.max(0.001, horizontal)));
+        double yawError = Math.abs(wrappedDegrees(targetYaw - player.getYRot()));
+        double pitchError = Math.abs(targetPitch - player.getXRot());
+        return yawError + pitchError * 0.65;
+    }
+
     private static BlockPos findAreaMineTarget(Minecraft mc, Mod area) {
         if (mc.player == null || mc.level == null) return null;
         AreaRegion region = areaRegion(area);
         if (region == null || !region.supportedSize()) return null;
+
+        // Never rotate away from a block we can already mine under the crosshair.
+        if (mc.hitResult instanceof BlockHitResult hit) {
+            BlockPos looked = hit.getBlockPos();
+            if (!AREA_MINE_SKIPPED.contains(looked) && validAreaMineTarget(mc, area, looked)) {
+                return looked.immutable();
+            }
+        }
+
         BlockPos origin = mc.player.blockPosition();
         int radius = 6;
         BlockPos best = null;
-        double bestSq = Double.MAX_VALUE;
+        double bestScore = Double.MAX_VALUE;
         for (int dy = -radius; dy <= radius; dy++) {
             for (int dx = -radius; dx <= radius; dx++) {
                 for (int dz = -radius; dz <= radius; dz++) {
@@ -1195,8 +1252,11 @@ public final class EioClient implements ClientModInitializer {
                     double px = pos.getX() + 0.5 - mc.player.getX();
                     double py = pos.getY() + 0.5 - mc.player.getY();
                     double pz = pos.getZ() + 0.5 - mc.player.getZ();
-                    double d = px * px + py * py + pz * pz;
-                    if (d < bestSq) { bestSq = d; best = pos.immutable(); }
+                    double distanceSq = px * px + py * py + pz * pz;
+                    double aim = blockAimError(mc.player, pos);
+                    // Strongly prefer small camera movements, then choose the nearer block.
+                    double score = distanceSq + aim * aim * 0.035;
+                    if (score < bestScore) { bestScore = score; best = pos.immutable(); }
                 }
             }
         }
@@ -1228,6 +1288,16 @@ public final class EioClient implements ClientModInitializer {
             if (cells <= 0) return false;
             if (areaNavIndex >= cells) {
                 if (areaMinedThisPass <= 0) {
+                    int layers = areaLayerCount(region, area);
+                    if (areaLayerIndex + 1 < layers) {
+                        areaLayerIndex++;
+                        areaNavIndex = 0;
+                        areaMoveTicks = 0;
+                        areaMinedThisPass = 0;
+                        AREA_MINE_SKIPPED.clear();
+                        notifyMessage("AREA MINER: LAYER " + (areaLayerIndex + 1) + "/" + layers, 0xFF73C8FF, 1800L);
+                        return false;
+                    }
                     areaComplete = true;
                     area.enabled = false;
                     save();
