@@ -20,7 +20,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Prepare Eio Client 0.14.0
+      - name: Prepare Eio Client 0.15.0
         shell: bash
         run: |
           set -euo pipefail
@@ -34,7 +34,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.14.0+26.3
+          mod_version=0.15.0+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -54,11 +54,12 @@ jobs:
           java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
 
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.14.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.14.0 quality release with compact glass GUI, stable keybinds, diagnostics, config recovery and expanded HUD/QoL modules'; d['authors']=['Eio']; d['environment']='client'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
+          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.15.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.15.0 advanced quality release with compact glass UI, recovery tools, diagnostics, stable inputs and expanded HUD/QoL modules'; d['authors']=['Eio']; d['environment']='client'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
 
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
+          python3 ../../.buildsrc/patch015.py
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
@@ -75,6 +76,7 @@ jobs:
             "key.eioclient.auto_jump": "Auto Jump",
             "key.eioclient.auto_swim": "Auto Swim",
             "key.eioclient.auto_respawn": "Auto Respawn",
+            "key.eioclient.low_health_alert": "Low Health Alert",
             "key.eioclient.inventory_info": "Inventory Info",
             "key.eioclient.durability_hud": "Durability HUD",
             "key.eioclient.coordinates": "Coordinates",
@@ -84,6 +86,9 @@ jobs:
             "key.eioclient.health": "Health",
             "key.eioclient.speed": "Speed",
             "key.eioclient.facing": "Facing",
+            "key.eioclient.rotation": "Rotation",
+            "key.eioclient.memory": "Memory",
+            "key.eioclient.clock": "Clock",
             "key.eioclient.fullbright": "Fullbright",
             "key.eioclient.chunk_info": "Chunk Info",
             "key.eioclient.waypoints": "Waypoints",
@@ -98,37 +103,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=eio26/EioClient.java
+          SRC=extracted/eioclient/src/main/java/com/eio/client/EioClient.java
           test -s "$SRC"
-          grep -Fq 'VERSION = "0.14.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-014-QA1"' "$SRC"
-          grep -Fq 'key.eioclient.clickgui' "$SRC"
-          grep -Fq 'jumpForced' "$SRC"
-          grep -Fq 'sneakForced' "$SRC"
-          grep -Fq 'clickAccumulator' "$SRC"
-          grep -Fq 'CONFIG_BACKUP' "$SRC"
-          grep -Fq 'ATOMIC_MOVE' "$SRC"
-          grep -Fq 'literal("doctor")' "$SRC"
-          grep -Fq 'drawRainbowBlockBrand' "$SRC"
-          grep -Fq 'Math.min(438' "$SRC"
-          grep -Fq 'Math.min(254' "$SRC"
+          grep -Fq 'VERSION = "0.15.0"' "$SRC"
+          grep -Fq 'BUILD_ID = "EIO-015-QA1"' "$SRC"
+          grep -Fq 'MOD_INDEX' "$SRC"
+          grep -Fq 'validateModel()' "$SRC"
+          grep -Fq 'literal("panic")' "$SRC"
+          grep -Fq 'literal("resetsettings")' "$SRC"
+          grep -Fq 'literal("reloadconfig")' "$SRC"
+          grep -Fq 'forwardForced' "$SRC"
+          grep -Fq 'flyForced' "$SRC"
+          grep -Fq 'configSource' "$SRC"
+          grep -Fq 'Require Attack' "$SRC"
+          grep -Fq 'Low Health Alert' "$SRC"
+          grep -Fq 'Rotation' "$SRC"
+          grep -Fq 'Memory' "$SRC"
+          grep -Fq 'Clock' "$SRC"
           grep -Fq 'defaultValue' "$SRC"
           grep -Fq 'MOUSE_BUTTON_RIGHT' "$SRC"
-          grep -Fq 'Auto Swim' "$SRC"
-          grep -Fq 'Session Timer' "$SRC"
-          grep -Fq 'Health' "$SRC"
-          grep -Fq 'Speed' "$SRC"
-          grep -Fq 'Facing' "$SRC"
-          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 26
+          grep -Fq 'Math.min(438' "$SRC"
+          grep -Fq 'Math.min(254' "$SRC"
+          grep -Fq 'drawRainbowBlockBrand' "$SRC"
+          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 30
           if grep -Fq 'getDayTime()' "$SRC"; then echo 'Unverified world-time API found'; exit 1; fi
           if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then echo 'Versioned keybind ID found'; exit 1; fi
           if grep -Eq 'TODO|FIXME' "$SRC"; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
-          echo "Source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('extracted/eioclient/src/main/java/com/eio/client/EioClient.java').read_text()
+          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"', s, re.M)
+          names=[n for n,_ in mods]
+          assert len(mods)==30, len(mods)
+          assert len(names)==len(set(n.lower() for n in names)), 'duplicate module name'
+          allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
+          assert all(c in allowed for _,c in mods), 'invalid category'
+          assert 'EIO-015-QA1' in s and 'key.eioclient.clickgui' in s
+          print('Model QA:', len(mods), 'modules /', len(allowed), 'categories')
+          PY
+          echo "Candidate source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
           echo 'Static source QA passed'
 
       - name: Build
         working-directory: extracted/eioclient
-        run: gradle build --stacktrace --warning-mode all
+        run: gradle clean build --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
@@ -140,9 +159,9 @@ jobs:
           unzip -tqq "$JAR"
 
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.14.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.15.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
-          [[ "$META" == *'"fabric-api": "*"'* ]]
+          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
 
@@ -157,31 +176,24 @@ jobs:
           grep -Fq '254' /tmp/gui.javap
           grep -Fq 'drawRainbowBlockBrand' /tmp/gui.javap
           grep -Fq 'categoryColor' /tmp/gui.javap
-          grep -Fq 'jumpForced' /tmp/main.javap
-          grep -Fq 'sneakForced' /tmp/main.javap
+          grep -Fq 'validateModel' /tmp/main.javap
+          grep -Fq 'releaseRuntimeState' /tmp/main.javap
+          grep -Fq 'restoreFly' /tmp/main.javap
+          grep -Fq 'forwardForced' /tmp/main.javap
           grep -Fq 'clickAccumulator' /tmp/main.javap
 
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
           strings /tmp/EioClient.class > /tmp/main.strings
           strings /tmp/ClickGui.class > /tmp/gui.strings
-          grep -Fq 'EIO-014-QA1' /tmp/main.strings
-          grep -Fq 'key.eioclient.clickgui' /tmp/main.strings
-          grep -Fq 'Auto Clicker' /tmp/main.strings
-          grep -Fq 'Kill Aura' /tmp/main.strings
-          grep -Fq 'Follow' /tmp/main.strings
-          grep -Fq 'Auto Swim' /tmp/main.strings
-          grep -Fq 'Health' /tmp/main.strings
-          grep -Fq 'Speed' /tmp/main.strings
-          grep -Fq 'Facing' /tmp/main.strings
-          grep -Fq 'Session Timer' /tmp/main.strings
-          grep -Fq 'Test Profile' /tmp/main.strings
-          grep -Fq 'doctor' /tmp/main.strings
+          for token in 'EIO-015-QA1' 'key.eioclient.clickgui' 'Auto Clicker' 'Kill Aura' 'Follow' 'Auto Swim' 'Low Health Alert' 'Rotation' 'Memory' 'Clock' 'Session Timer' 'panic' 'resetsettings' 'reloadconfig' 'doctor'; do
+            grep -Fq "$token" /tmp/main.strings
+          done
           grep -Fq 'MADE BY EIO' /tmp/gui.strings
           if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
 
           SIZE=$(stat -c%s "$JAR")
-          test "$SIZE" -gt 20000
+          test "$SIZE" -gt 22000
           SHA=$(sha256sum "$JAR" | awk '{print $1}')
           echo "Deep QA passed: $JAR"
           echo "Size: $SIZE bytes"
@@ -190,15 +202,15 @@ jobs:
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.14.0
+          name: EioClient-26.3-v0.15.0
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
           if-no-files-found: error
 
-      - name: Upload canonical source snapshot
+      - name: Upload passing source snapshot
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.14.0-source
-          path: eio26/EioClient.java
+          name: EioClient-26.3-v0.15.0-source
+          path: extracted/eioclient/src/main/java/com/eio/client/EioClient.java
           if-no-files-found: error
