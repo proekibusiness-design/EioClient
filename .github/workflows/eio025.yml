@@ -1,0 +1,103 @@
+name: EioClient 0.25 Area Miner + GUI
+
+on:
+  push:
+    branches: [ feature/0.25-area-miner-gui ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Apply Area Miner and GUI patch
+        run: python3 .github/eio025_area_gui_patch.py
+
+      - name: Static QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('eio26/EioClient.java').read_text()
+          gp=Path('gradle.properties').read_text()
+          assert 'VERSION = "0.25.0"' in s
+          assert 'BUILD_ID = "EIO-025-AREA1"' in s
+          assert 'mod_version=0.25.0+26.3' in gp
+          assert 'mod("Area Miner", "Mining"' in s
+          for token in ['runAreaMiner','findAreaMineTarget','validAreaMineTarget','areaMineLayerTop','AREA_MINE_SKIPPED','/eio area pos1','categoryScroll']:
+              assert token in s, token
+          assert 'areaMineLayerTop = areaSurfaceY();' in s
+          assert 'Math.max(absoluteBottom, areaMineLayerTop - 4)' in s
+          assert 'if (pos.getY() > areaSurfaceY()) return false;' in s
+          assert 'areaMineLayerTop - 5' in s
+          assert 'categoryScroll - verticalAmount * 22.0' in s
+          print('0.25 static QA passed')
+          PY
+
+      - name: Build and tests
+        run: gradle clean test build --stacktrace --warning-mode all
+
+      - name: Deep JAR QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          JAR=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
+          test -n "$JAR" && test -s "$JAR"
+          unzip -tqq "$JAR"
+          META=$(unzip -p "$JAR" fabric.mod.json)
+          [[ "$META" == *'"version": "0.25.0+26.3"'* ]]
+          test -z "$(jar tf "$JAR" | sort | uniq -d)"
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
+          for token in runAreaMiner findAreaMineTarget validAreaMineTarget resetAreaMinerProgress areaMinerStatus; do grep -F "$token" /tmp/main.javap >/dev/null; done
+          for token in mouseScrolled categoryScroll drawScrollBar; do grep -F "$token" /tmp/gui.javap >/dev/null; done
+          unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/strings
+          for token in 'EIO-025-AREA1' 'Area Miner' 'Tunnel Width' 'Auto Move'; do grep -F "$token" /tmp/strings >/dev/null; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+
+      - name: Reproducibility check
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIRST=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
+          cp "$FIRST" /tmp/eio-first.jar
+          FIRST_SHA=$(sha256sum /tmp/eio-first.jar | awk '{print $1}')
+          gradle clean test build --quiet
+          SECOND=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
+          SECOND_SHA=$(sha256sum "$SECOND" | awk '{print $1}')
+          cmp -s /tmp/eio-first.jar "$SECOND"
+          test "$FIRST_SHA" = "$SECOND_SHA"
+          echo "Reproducible SHA256: $SECOND_SHA"
+
+      - name: Canonicalize passing 0.25 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize EioClient 0.25 Area Miner and GUI changes'
+            git push origin HEAD:feature/0.25-area-miner-gui
+          fi
+
+      - name: Upload candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: EioClient-26.3-v0.25.0-area-gui
+          path: |
+            build/libs/*.jar
+            !build/libs/*-sources.jar
+          if-no-files-found: error
