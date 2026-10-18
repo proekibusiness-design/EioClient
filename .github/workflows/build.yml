@@ -67,12 +67,27 @@ jobs:
       - name: Unit tests and native Fabric build
         run: gradle clean test build --stacktrace --warning-mode all
 
-      - name: Real 26.3 client + integrated-server GameTest
-        timeout-minutes: 3
+      - name: Prepare software OpenGL for client GameTest
         shell: bash
         run: |
           set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 150s xvfb-run -a gradle runClientGameTest --stacktrace --warning-mode all
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
+          Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
+          echo $! >/tmp/xvfb.pid
+          sleep 2
+          DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B
+
+      - name: Real 26.3 client + integrated-server GameTest
+        timeout-minutes: 3
+        shell: bash
+        env:
+          DISPLAY: ':99'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          SDL_VIDEODRIVER: x11
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=15s 150s gradle runClientGameTest --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
@@ -122,6 +137,7 @@ jobs:
             build/run/clientGameTest/logs/**
             build/run/clientGameTest/screenshots/**
             build/run/clientGameTest/config/eio-diagnostics.log
+            /tmp/xvfb.log
           if-no-files-found: ignore
 
       - name: Upload compatibility candidate
