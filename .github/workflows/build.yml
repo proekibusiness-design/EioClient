@@ -61,7 +61,6 @@ jobs:
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
-
           python3 - <<'PY'
           from pathlib import Path
           p=Path('src/main/java/com/eio/client/EioClient.java')
@@ -69,70 +68,26 @@ jobs:
           s=s.replace('import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;', 'import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;\nimport net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;')
           s=s.replace('public static final String VERSION = "0.8.0";', 'public static final String VERSION = "0.8.2";')
           s=s.replace('private static KeyMapping.Category keyCategory;', 'private static KeyMapping.Category keyCategory;\n    private static KeyMapping guiKey;')
-          old='''        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));
-        for (Mod m : MODS) {
-            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                    "key.eioclient." + slug(m.name), InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory));
-        }
-'''
-          new='''        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));
-        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                "key.eioclient.v082.clickgui", InputConstants.Type.KEYSYM, InputConstants.KEY_RSHIFT, keyCategory));
-        for (Mod m : MODS) {
-            int key = m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey;
-            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(
-                    "key.eioclient.v082." + slug(m.name), InputConstants.Type.KEYSYM, key, keyCategory));
-        }
-'''
-          if old not in s: raise SystemExit('registration block not found')
+          old='        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));\n        for (Mod m : MODS) {\n            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                    "key.eioclient." + slug(m.name), InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory));\n        }\n'
+          new='        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));\n        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                "key.eioclient.v082.clickgui", InputConstants.Type.KEYSYM, InputConstants.KEY_RSHIFT, keyCategory));\n        for (Mod m : MODS) {\n            int key = m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey;\n            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                    "key.eioclient.v082." + slug(m.name), InputConstants.Type.KEYSYM, key, keyCategory));\n        }\n'
+          assert old in s, 'registration block not found'
           s=s.replace(old,new)
-          old='''        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
-            if (screen instanceof TitleScreen) {
-                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));
-            }
-        });
-'''
-          new='''        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
-            if (screen instanceof TitleScreen) {
-                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));
-            }
-            if (screen instanceof ClickGui) {
-                ScreenKeyboardEvents.beforeKeyPress(screen).register((s, event) -> {
-                    if (guiKey != null && guiKey.matches(event)) s.onClose();
-                });
-            }
-        });
-'''
-          if old not in s: raise SystemExit('screen block not found')
+          old='        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {\n            if (screen instanceof TitleScreen) {\n                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));\n            }\n        });\n'
+          new='        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {\n            if (screen instanceof TitleScreen) {\n                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));\n            }\n            if (screen instanceof ClickGui) {\n                ScreenKeyboardEvents.beforeKeyPress(screen).register((s, event) -> {\n                    if (guiKey != null && guiKey.matches(event)) s.onClose();\n                });\n            }\n        });\n'
+          assert old in s, 'screen block not found'
           s=s.replace(old,new)
-          old='''        boolean rshift = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);
-        if (rshift && !guiGlobalPrev && !guiOpen) openGui();
-        guiGlobalPrev = rshift;
-'''
-          new='''        while (guiKey != null && guiKey.consumeClick()) {
-            if (!guiOpen) openGui();
-        }
-'''
-          if old not in s: raise SystemExit('raw rshift tick block not found')
+          old='        boolean rshift = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);\n        if (rshift && !guiGlobalPrev && !guiOpen) openGui();\n        guiGlobalPrev = rshift;\n'
+          new='        while (guiKey != null && guiKey.consumeClick()) {\n            if (!guiOpen) openGui();\n        }\n'
+          assert old in s, 'raw rshift block not found'
           s=s.replace(old,new)
-          s=s.replace('''            guiLocalPrev = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);''','''            guiLocalPrev = false;''')
-          old='''        @Override public void tick() {
-            super.tick();
-            boolean down = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);
-            if (down && !guiLocalPrev) { onClose(); return; }
-            guiLocalPrev = down;
-        }
-'''
-          new='''        @Override public void tick() {
-            super.tick();
-        }
-'''
-          if old not in s: raise SystemExit('raw gui tick block not found')
+          s=s.replace('            guiLocalPrev = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);','            guiLocalPrev = false;')
+          old='        @Override public void tick() {\n            super.tick();\n            boolean down = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);\n            if (down && !guiLocalPrev) { onClose(); return; }\n            guiLocalPrev = down;\n        }\n'
+          new='        @Override public void tick() {\n            super.tick();\n        }\n'
+          assert old in s, 'raw gui tick block not found'
           s=s.replace(old,new)
           s=s.replace('mc.player.swing(InteractionHand.MAIN_HAND);','mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);')
           p.write_text(s)
           PY
-
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
