@@ -1,4 +1,4 @@
-name: Build EioClient 0.26 AREA3
+name: Build EioClient 0.27 Area Miner
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static Area Miner QA
+      - name: Apply deterministic Area Miner fix
+        run: python3 .github/eio027_area1_patch.py
+
+      - name: Static Area Miner and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -28,19 +31,41 @@ jobs:
           from pathlib import Path
           import re
           s=Path('eio26/EioClient.java').read_text()
-          region=Path('eio26/com/eio/client/AreaRegion.java').read_text()
-          tests=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
+          r=Path('eio26/com/eio/client/AreaRegion.java').read_text()
+          t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
+          gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.26.0"' in s
-          assert 'BUILD_ID = "EIO-026-AREA3"' in s
-          assert len(mods)==45
+          assert 'VERSION = "0.27.0"' in s
+          assert 'BUILD_ID = "EIO-027-AREA1"' in s
+          assert 'mod_version=0.27.0+26.3' in gp
+          assert len(mods)==45, len(mods)
           assert ('Area Miner','Mining') in mods
-          for token in ['Turn Lead','Turn Timeout','region.isRowEnd(areaNavIndex)','Fast handoff']:
-              assert token in s, token
-          assert 'boolean isRowEnd(int index)' in region
-          assert 'identifiesSerpentineRowEndsForFastTurns' in tests
+          assert 'AREA_STAGE_HEIGHT = 5' in s
+          assert 'areaStageIndex' in s
+          assert 'stageCount(AREA_STAGE_HEIGHT)' in s
+          assert 'stageTopY(areaStageIndex, AREA_STAGE_HEIGHT)' in s
+          assert 'stageBottomY(areaStageIndex, AREA_STAGE_HEIGHT)' in s
+          assert 'pauseAreaMiner' in s
+          assert 'PATH BLOCKED AT LANE' in s
+          assert 'NEXT 5-BLOCK LAYER' in s
+          assert 'Turn Lead' not in s
+          assert 'Turn Timeout' not in s
+          find=s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean updateAreaNavigation')]
+          assert 'for (int y = top; y >= bottom; y--)' in find
+          assert 'bestSq' not in find
+          assert 'AREA_MINE_SKIPPED.contains' not in find
+          nav=s[s.index('private static boolean updateAreaNavigation'):s.index('private static void faceHorizontal')]
+          assert 'areaNavIndex++' in nav
+          assert 'pauseAreaMiner(area, "PATH BLOCKED AT LANE "' in nav
+          assert 'Turn Lead' not in nav and 'Turn Timeout' not in nav
+          assert 'startX' in r and 'startZ' in r and 'xStep' in r and 'zStep' in r
+          assert 'stageCount(int stageHeight)' in r
+          assert 'stageTopY(int stage, int stageHeight)' in r
+          assert 'stageBottomY(int stage, int stageHeight)' in r
+          assert 'startsSerpentineAtCornerAInEitherDirection' in t
+          assert 'splitsDepthIntoFiveBlockStagesFromSurface' in t
           assert 'categoriesScroll' in s and 'GUI=760x430 modern-nav-glass' in s
-          print('AREA3 final static QA passed')
+          print('0.27 deterministic Area Miner static QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -54,7 +79,7 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.26.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.27.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
@@ -63,11 +88,13 @@ jobs:
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/region.javap
-          for token in findAreaMineTarget updateAreaNavigation areaStatus; do grep -Fq "$token" /tmp/main.javap; done
-          grep -Fq 'isRowEnd' /tmp/region.javap
+          for token in findAreaMineTarget updateAreaNavigation areaStatus pauseAreaMiner validAreaMineTarget; do grep -Fq "$token" /tmp/main.javap; done
+          for token in stageCount stageTopY stageBottomY navigationCell; do grep -Fq "$token" /tmp/region.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-026-AREA3' 'Turn Lead' 'Turn Timeout'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final AREA3 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-027-AREA1' 'NEXT 5-BLOCK LAYER' 'PATH BLOCKED AT LANE' 'Deterministic serpentine quarry'; do grep -Fq "$token" /tmp/main.strings; done
+          ! grep -Fq 'Turn Lead' /tmp/main.strings
+          ! grep -Fq 'Turn Timeout' /tmp/main.strings
+          echo "0.27 candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -83,10 +110,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final AREA3 JAR
+      - name: Canonicalize passing 0.27 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize Eio 0.27 deterministic 5-block Area Miner'
+            git push origin HEAD:feature/0.25-area-miner-ui
+          fi
+
+      - name: Upload 0.27 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.0-AREA3-final
+          name: EioClient-26.3-v0.27.0-area-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
