@@ -23,13 +23,15 @@ jobs:
       - name: Apply strict layered Area Miner fix
         run: python3 .github/eio027_layer_patch.py
 
+      - name: Align 5-block regression contract
+        run: python3 .github/eio027_testfix.py
+
       - name: Static behavioral QA
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import re
           s=Path('eio26/EioClient.java').read_text()
           r=Path('eio26/com/eio/client/AreaRegion.java').read_text()
           t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
@@ -50,9 +52,9 @@ jobs:
           assert 'return topY - layer * 5;' in r
           assert 'return Math.max(bottomY, layerTop(layer) - 4);' in r
           assert 'excavatesFiveBlocksAtATimeStrictlyBelowSurface' in t
+          assert 'AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(2, 64, 2), 5)' in t
           assert 'categoriesScroll' in s and 'mouseScrolled' in s
           assert s.count('else if (setting instanceof PointSetting point) point.reset();') == 1
-          # Old random nearest-volume implementation must be gone from Area Miner helper section.
           area = s[s.index('private static AreaRegion areaRegion'):s.index('private static void faceHorizontal')]
           assert 'for (int dy = -radius' not in area
           print('0.27 static behavioral QA passed')
