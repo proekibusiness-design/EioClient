@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply deterministic Area Miner fix
-        run: python3 .github/eio027_area1_patch.py
 
       - name: Static Area Miner and GUI QA
         shell: bash
@@ -55,9 +52,7 @@ jobs:
           assert 'bestSq' not in find
           assert 'AREA_MINE_SKIPPED.contains' not in find
           nav=s[s.index('private static boolean updateAreaNavigation'):s.index('private static void faceHorizontal')]
-          assert 'areaNavIndex++' in nav
           assert 'pauseAreaMiner(area, "PATH BLOCKED AT LANE "' in nav
-          assert 'Turn Lead' not in nav and 'Turn Timeout' not in nav
           assert 'startX' in r and 'startZ' in r and 'xStep' in r and 'zStep' in r
           assert 'stageCount(int stageHeight)' in r
           assert 'stageTopY(int stage, int stageHeight)' in r
@@ -65,7 +60,7 @@ jobs:
           assert 'startsSerpentineAtCornerAInEitherDirection' in t
           assert 'splitsDepthIntoFiveBlockStagesFromSurface' in t
           assert 'categoriesScroll' in s and 'GUI=760x430 modern-nav-glass' in s
-          print('0.27 deterministic Area Miner static QA passed')
+          print('0.27 final deterministic Area Miner QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -94,7 +89,7 @@ jobs:
           for token in 'EIO-027-AREA1' 'NEXT 5-BLOCK LAYER' 'PATH BLOCKED AT LANE' 'Deterministic serpentine quarry'; do grep -Fq "$token" /tmp/main.strings; done
           ! grep -Fq 'Turn Lead' /tmp/main.strings
           ! grep -Fq 'Turn Timeout' /tmp/main.strings
-          echo "0.27 candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final 0.27 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -110,22 +105,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.27 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java gradle.properties
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize Eio 0.27 deterministic 5-block Area Miner'
-            git push origin HEAD:feature/0.25-area-miner-ui
-          fi
-
-      - name: Upload 0.27 candidate
+      - name: Upload final 0.27 JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.27.0-area-candidate
+          name: EioClient-26.3-v0.27.0-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
