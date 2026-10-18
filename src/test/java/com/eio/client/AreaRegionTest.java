@@ -15,10 +15,20 @@ final class AreaRegionTest {
         assertEquals(-3, r.minZ);
         assertEquals(4, r.maxZ);
         assertEquals(70, r.topY);
-        assertEquals(65, r.bottomY);
+        assertEquals(66, r.bottomY);
         assertEquals(5, r.width());
         assertEquals(8, r.length());
-        assertEquals(6, r.depth());
+        assertEquals(5, r.depth());
+    }
+
+    @Test
+    void hardCapsAreaMiningDepthAtFiveBlocks() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 80, 0), new BlockPos(1, 78, 1), 64);
+        assertNotNull(r);
+        assertEquals(80, r.topY);
+        assertEquals(76, r.bottomY);
+        assertEquals(5, r.depth());
+        assertFalse(r.contains(new BlockPos(0, 75, 0)));
     }
 
     @Test
@@ -27,40 +37,6 @@ final class AreaRegionTest {
         assertTrue(r.contains(new BlockPos(1, 63, 1)));
         assertFalse(r.contains(new BlockPos(3, 63, 1)));
         assertFalse(r.contains(new BlockPos(1, 60, 1)));
-    }
-
-    @Test
-    void splitsDepthIntoFiveBlockTopDownLayers() {
-        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 13);
-        assertNotNull(r);
-        assertEquals(3, r.layerCount());
-        assertEquals(70, r.layerTopY(0));
-        assertEquals(66, r.layerBottomY(0));
-        assertEquals(65, r.layerTopY(1));
-        assertEquals(61, r.layerBottomY(1));
-        assertEquals(60, r.layerTopY(2));
-        assertEquals(58, r.layerBottomY(2));
-    }
-
-    @Test
-    void exactFiveBlockDepthUsesOneLayer() {
-        AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(1, 64, 1), 5);
-        assertNotNull(r);
-        assertEquals(1, r.layerCount());
-        assertEquals(64, r.layerTopY(0));
-        assertEquals(60, r.layerBottomY(0));
-    }
-
-    @Test
-    void partialFinalLayerDoesNotExceedRequestedDepth() {
-        AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(1, 64, 1), 6);
-        assertNotNull(r);
-        assertEquals(2, r.layerCount());
-        assertEquals(64, r.layerTopY(0));
-        assertEquals(60, r.layerBottomY(0));
-        assertEquals(59, r.layerTopY(1));
-        assertEquals(59, r.layerBottomY(1));
-        assertFalse(r.hasLayer(2));
     }
 
     @Test
