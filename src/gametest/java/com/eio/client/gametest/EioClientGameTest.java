@@ -9,7 +9,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContex
 public final class EioClientGameTest implements FabricClientGameTest {
     @Override
     public void runTest(ClientGameTestContext context) {
-        if (!"0.24.0".equals(EioClient.VERSION)) {
+        if (!"0.24.1".equals(EioClient.VERSION)) {
             throw new AssertionError("Unexpected Eio version: " + EioClient.VERSION);
         }
 

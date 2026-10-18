@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.24.0";
-    public static final String BUILD_ID = "EIO-024-COMPAT1";
+    public static final String VERSION = "0.24.1";
+    public static final String BUILD_ID = "EIO-0241-PROTOCOL1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -90,7 +90,10 @@ public final class EioClient implements ClientModInitializer {
     private static int runtimeFaults;
     private static String lastRuntimeFault = "none";
     private static final CompatibilityState COMPAT = new CompatibilityState();
+    private static final SingleIntentQueue<Entity> ATTACK_QUEUE = new SingleIntentQueue<>();
     private static long suppressedOutOfRangeAttacks;
+    private static long queuedAttacks;
+    private static long coalescedAttacks;
     private static final long sessionStartedNanos = System.nanoTime();
     private static final DateTimeFormatter CLOCK_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
     private static final String[] FOLLOW_MOB_IDS = {
@@ -243,8 +246,9 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Target", true, "Show the current Chunk Miner target coordinates.")
                 .bool("Tool", true, "Show remaining durability for the selected tool.");
 
-        mod("Compatibility Guard", "Misc", "Keeps automated interactions inside vanilla reach and yields briefly when the server corrects player position.", -1)
+        mod("Compatibility Guard", "Misc", "Keeps automated interactions inside vanilla semantics and yields briefly when the server corrects player position.", -1)
                 .bool("Vanilla Ranges", true, "Require Minecraft's own entity/block interaction-range checks before automated actions.")
+                .bool("Line Of Sight", true, "Require direct vanilla line of sight before Eio queues an automated entity attack.")
                 .bool("Pause On Correction", true, "Temporarily yield Eio movement/combat/mining after a server position correction or teleport.")
                 .num("Pause Ticks", 4.0, 1.0, 20.0, 1.0, "Ticks to yield automation after a server position correction.")
                 .bool("Diagnostics", true, "Write server-position telemetry to eio-diagnostics.log.");
@@ -278,6 +282,7 @@ public final class EioClient implements ClientModInitializer {
                     "key.eioclient." + slug(m.name), InputConstants.Type.KEYBOARD, key, keyCategory));
         }
 
+        ClientTickEvents.START_CLIENT_TICK.register(EioClient::guardedStartTick);
         ClientTickEvents.END_CLIENT_TICK.register(EioClient::guardedTick);
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient", "hud"), EioClient::guardedHud);
         ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
@@ -304,7 +309,8 @@ public final class EioClient implements ClientModInitializer {
                                     + " | backup=" + Files.exists(CONFIG_BACKUP) + " | safeMode=" + runtimeSafeMode
                                     + " | faults=" + runtimeFaults + " | lastFault=" + lastRuntimeFault
                                     + " | serverCorrections=" + COMPAT.correctionCount() + " correctionPause=" + COMPAT.pauseTicks()
-                                    + " | blockedOutOfRangeAttacks=" + suppressedOutOfRangeAttacks;
+                                    + " | blockedOutOfRangeAttacks=" + suppressedOutOfRangeAttacks
+                                    + " | queuedAttacks=" + queuedAttacks + " coalescedAttacks=" + coalescedAttacks;
                             c.getSource().sendFeedback(Component.literal(report));
                             return 1;
                         }))
@@ -432,6 +438,18 @@ public final class EioClient implements ClientModInitializer {
         if (guard != null && guard.enabled) releaseCorrectionSensitiveState(mc);
         if (guard != null && guard.enabled && guard.bool("Diagnostics").value) {
             appendDiagnostic("SERVER_POSITION id=" + id + " pause=" + pause + " localServer=" + mc.isLocalServer());
+        }
+    }
+
+    private static void guardedStartTick(Minecraft mc) {
+        try {
+            if (runtimeSafeMode) {
+                ATTACK_QUEUE.clear();
+                return;
+            }
+            flushPendingAttack(mc);
+        } catch (Throwable t) {
+            enterSafeMode("startTick", t, mc);
         }
     }
 
@@ -649,6 +667,7 @@ public final class EioClient implements ClientModInitializer {
             flyForced = false;
             lowHealthAlerted = false;
             lowHealthCooldown = 0;
+            ATTACK_QUEUE.clear();
             COMPAT.clearPause();
             return;
         }
@@ -1166,12 +1185,31 @@ public final class EioClient implements ClientModInitializer {
         return !compatibilityRangeGuardEnabled() || (mc.player != null && mc.player.isWithinEntityInteractionRange(target, 0.0));
     }
 
+    private static boolean hasRequiredAttackLineOfSight(Minecraft mc, Entity target) {
+        Mod guard = find("Compatibility Guard");
+        return guard == null || !guard.enabled || !guard.bool("Line Of Sight").value
+                || (mc.player != null && mc.player.hasLineOfSight(target));
+    }
+
     private static void attack(Minecraft mc, Entity target) {
         if (mc.player == null || mc.gameMode == null || target == null || !target.isAlive()) return;
         if (!withinVanillaEntityRange(mc, target)) {
             suppressedOutOfRangeAttacks++;
             return;
         }
+        if (!hasRequiredAttackLineOfSight(mc, target)) return;
+        if (ATTACK_QUEUE.offer(target)) queuedAttacks++;
+        else coalescedAttacks++;
+    }
+
+    private static void flushPendingAttack(Minecraft mc) {
+        Entity target = ATTACK_QUEUE.poll();
+        if (target == null || mc.player == null || mc.gameMode == null || mc.level == null || !target.isAlive()) return;
+        if (!withinVanillaEntityRange(mc, target)) {
+            suppressedOutOfRangeAttacks++;
+            return;
+        }
+        if (!hasRequiredAttackLineOfSight(mc, target)) return;
         mc.gameMode.attack(mc.player, target);
         mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);
         long now = System.currentTimeMillis();
@@ -1347,6 +1385,7 @@ public final class EioClient implements ClientModInitializer {
         clickAccumulator = 0.0;
         auraCooldown = 0;
         triggerCooldown = 0;
+        ATTACK_QUEUE.clear();
     }
 
     private static void releaseRuntimeState(Minecraft mc) {
@@ -1371,6 +1410,7 @@ public final class EioClient implements ClientModInitializer {
         clickAccumulator = 0.0;
         auraCooldown = 0;
         triggerCooldown = 0;
+        ATTACK_QUEUE.clear();
         toolSaverWarned = false;
         lowHealthAlerted = false;
         lowHealthCooldown = 0;
