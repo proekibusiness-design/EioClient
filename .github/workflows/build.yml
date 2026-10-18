@@ -99,12 +99,13 @@ jobs:
         run: |
           JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
-          unzip -p "$JAR" fabric.mod.json | grep -Fq '"version": "0.12.0+26.3"'
+          META=$(unzip -p "$JAR" fabric.mod.json)
+          [[ "$META" == *'"version": "0.12.0+26.3"'* ]]
           jar tf "$JAR" | grep -q 'com/eio/client/EioClient.class'
           JAVAP=$(javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui')
-          echo "$JAVAP" | grep -q 'sipush        420'
-          echo "$JAVAP" | grep -q 'sipush        240'
-          echo "$JAVAP" | grep -q 'drawRainbowBlockBrand'
+          [[ "$JAVAP" == *'sipush        420'* ]]
+          [[ "$JAVAP" == *'sipush        240'* ]]
+          [[ "$JAVAP" == *'drawRainbowBlockBrand'* ]]
           echo "Verified ultra-compact 420x240 0.12.0 GUI in $JAR"
 
       - name: Upload JAR
