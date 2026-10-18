@@ -3,17 +3,13 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - 'eio26/EioClient.java'
-      - 'gradle.properties'
-      - 'src/main/resources/assets/eioclient/lang/en_us.json'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -24,14 +20,12 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply Eio 0.18 upgrade
-        run: python3 .github/eio018_patch.py
-
-      - name: Static source QA
+      - name: Static source and project QA
         shell: bash
         run: |
           set -euo pipefail
           SRC=eio26/EioClient.java
+          test -s "$SRC"
           grep -Fq 'VERSION = "0.18.0"' "$SRC"
           grep -Fq 'BUILD_ID = "EIO-018-QA1"' "$SRC"
           grep -Fq 'mod_version=0.18.0+26.3' gradle.properties
@@ -55,15 +49,14 @@ jobs:
           mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"',s,re.M)
           assert len(mods)==35
           assert len({n.lower() for n,_ in mods})==35
-          names={n for n,_ in mods}
-          assert {'Reach','Creative Assist','Follow'} <= names
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           for name,_ in mods:
               slug=re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',name.lower()))
               assert 'key.eioclient.'+slug in lang, name
           assert s.count('class MobListSetting')==1
           assert s.count('public static final class ClickGui')==1
-          print('0.18 static QA passed')
+          assert s.count('private static boolean validFollowTarget')==1
+          print('0.18 final static QA passed')
           PY
 
       - name: Native Java and Fabric build
@@ -78,6 +71,10 @@ jobs:
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.18.0+26.3"'* ]]
+          [[ "$META" == *'"environment": "client"'* ]]
+          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
+          [[ "$META" == *'"minecraft": "~26.3"'* ]]
+          [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$MobListSetting.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
@@ -90,7 +87,7 @@ jobs:
           strings /tmp/EioClient.class > /tmp/main.strings
           for token in 'EIO-018-QA1' 'Creative Assist' 'SERVER FLIGHT PERMISSION REQUIRED' 'Reach' 'Mob Selection'; do grep -Fq "$token" /tmp/main.strings; done
           test "$(stat -c%s "$JAR")" -gt 32000
-          echo "Deep QA SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -106,22 +103,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.18 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties src/main/resources/assets/eioclient/lang/en_us.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.18 Reach display and Creative Assist release'
-            git push origin HEAD:main
-          fi
-
-      - name: Upload 0.18 candidate
+      - name: Upload final JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.18.0-candidate
+          name: EioClient-26.3-v0.18.0-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
