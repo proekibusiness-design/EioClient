@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.7.0+26.3
+          mod_version=0.7.2+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -62,7 +62,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.7.0
+          name: EioClient-26.3-v0.7.2
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
