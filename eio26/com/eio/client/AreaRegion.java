@@ -8,7 +8,6 @@ import net.minecraft.core.BlockPos;
  */
 final class AreaRegion {
     static final int MAX_SIDE = 128;
-    static final int LAYER_DEPTH = 5;
 
     final int minX;
     final int maxX;
@@ -40,24 +39,6 @@ final class AreaRegion {
     int length() { return maxZ - minZ + 1; }
     int depth() { return topY - bottomY + 1; }
 
-    int layerCount() {
-        return (depth() + LAYER_DEPTH - 1) / LAYER_DEPTH;
-    }
-
-    boolean hasLayer(int layerIndex) {
-        return layerIndex >= 0 && layerIndex < layerCount();
-    }
-
-    int layerTopY(int layerIndex) {
-        if (!hasLayer(layerIndex)) return bottomY;
-        return Math.max(bottomY, topY - layerIndex * LAYER_DEPTH);
-    }
-
-    int layerBottomY(int layerIndex) {
-        if (!hasLayer(layerIndex)) return bottomY;
-        return Math.max(bottomY, layerTopY(layerIndex) - LAYER_DEPTH + 1);
-    }
-
     boolean supportedSize() {
         return width() > 0 && length() > 0 && width() <= MAX_SIDE && length() <= MAX_SIDE;
     }
@@ -86,11 +67,6 @@ final class AreaRegion {
         if ((row & 1) != 0) col = width() - 1 - col;
         int navY = Math.max(bottomY, Math.min(topY, y));
         return new BlockPos(minX + col, navY, minZ + row);
-    }
-
-    String layerSummary(int layerIndex) {
-        int safe = Math.max(0, Math.min(layerCount() - 1, layerIndex));
-        return "layer " + (safe + 1) + "/" + layerCount() + " Y " + layerTopY(safe) + ".." + layerBottomY(safe);
     }
 
     String summary() {
