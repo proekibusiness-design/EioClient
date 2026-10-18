@@ -8,6 +8,7 @@ import net.minecraft.core.BlockPos;
  */
 final class AreaRegion {
     static final int MAX_SIDE = 128;
+    static final int MAX_DEPTH = 5;
 
     final int minX;
     final int maxX;
@@ -27,7 +28,8 @@ final class AreaRegion {
 
     static AreaRegion from(BlockPos a, BlockPos b, int depth) {
         if (a == null || b == null) return null;
-        int safeDepth = Math.max(1, Math.min(64, depth));
+        // Hard safety cap: Area Miner must never clear more than five vertical blocks.
+        int safeDepth = Math.max(1, Math.min(MAX_DEPTH, depth));
         int top = Math.max(a.getY(), b.getY());
         return new AreaRegion(
                 Math.min(a.getX(), b.getX()), Math.max(a.getX(), b.getX()),
