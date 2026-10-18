@@ -72,6 +72,27 @@ final class AreaRegionTest {
     }
 
     @Test
+    void stageBandsAreStrictAndNonOverlapping() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 12);
+        assertEquals(5, r.stageLayerCount(0));
+        assertEquals(5, r.stageLayerCount(1));
+        assertEquals(2, r.stageLayerCount(2));
+
+        for (int y = 70; y >= 59; y--) {
+            int memberships = 0;
+            for (int stage = 0; stage < r.stageCount(); stage++) {
+                if (r.containsStage(new BlockPos(1, y, 1), stage)) memberships++;
+            }
+            assertEquals(1, memberships, "Y=" + y + " must belong to exactly one stage");
+        }
+
+        assertFalse(r.containsStage(new BlockPos(1, 65, 1), 0));
+        assertTrue(r.containsStage(new BlockPos(1, 65, 1), 1));
+        assertFalse(r.containsStage(new BlockPos(1, 60, 1), 1));
+        assertTrue(r.containsStage(new BlockPos(1, 60, 1), 2));
+    }
+
+    @Test
     void rejectsOversizedNavigationArea() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(AreaRegion.MAX_SIDE, 64, 0), 1);
         assertNotNull(r);

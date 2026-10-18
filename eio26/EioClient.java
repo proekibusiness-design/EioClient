@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.29.0";
-    public static final String BUILD_ID = "EIO-029-LANE1";
+    public static final String VERSION = "0.30.0";
+    public static final String BUILD_ID = "EIO-030-STAGE1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -75,6 +75,7 @@ public final class EioClient implements ClientModInitializer {
     private static int areaStallPasses;
     private static int areaMoveTicks;
     private static int areaMinedThisPass;
+    private static int areaStageSweeps;
     private static boolean areaMoveRequested;
     private static boolean areaComplete;
     private static final Set<BlockPos> AREA_MINE_SKIPPED = new HashSet<>();
@@ -248,10 +249,10 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Exposed Only", true, "Only target blocks with at least one exposed face.")
                 .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the active Nuker target.");
-        mod("Area Miner", "Mining", "Walks deterministic serpentine lanes and continuously mines the valid lane block currently under the crosshair.", -1)
+        mod("Area Miner", "Mining", "Clears the selected quarry in strict five-block-deep bands, finishing the whole active band before descending.", -1)
                 .point("Corner A", "Stand at the first horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .point("Corner B", "Stand at the opposite horizontal corner and left-click this row to set it here. Right-click clears it.")
-                .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth below the surface. Area Miner processes this in fixed 5-block stages.")
+                .num("Depth", 10.0, 1.0, 64.0, 1.0, "Total depth below the surface. Eio completely clears each 5-block band before entering the next one.")
                 .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one serpentine navigation cell before pausing instead of wandering.")
                 .bool("Auto Move", true, "Hold forward while mining the current lane so the player walks into each cleared block seamlessly.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating through a cleared lane.")
@@ -1136,8 +1137,11 @@ public final class EioClient implements ClientModInitializer {
         int layers = region.stageLayerCount(stage);
         int layer = Math.max(0, Math.min(areaLayerIndex, Math.max(0, layers - 1)));
         int planeY = region.stageLayerY(stage, layer);
+        int bandTop = region.stageTopY(stage);
+        int bandBottom = region.stageBottomY(stage);
         String stageText = "stage " + (stage + 1) + "/" + region.stageCount()
-                + " | layer " + (layer + 1) + "/" + layers + " Y=" + planeY;
+                + " | band Y " + bandTop + ".." + bandBottom
+                + " | plane " + (layer + 1) + "/" + layers + " Y=" + planeY;
         return "Area Miner: " + region.summary() + " | " + stageText
                 + (areaComplete ? " | complete" : " | lane " + (Math.min(areaNavIndex, Math.max(0, region.navigationCells() - 1)) + 1) + "/" + region.navigationCells());
     }
@@ -1152,6 +1156,7 @@ public final class EioClient implements ClientModInitializer {
         areaStallPasses = 0;
         areaMoveTicks = 0;
         areaMinedThisPass = 0;
+        areaStageSweeps = 0;
         areaMoveRequested = false;
         areaComplete = false;
         AREA_MINE_SKIPPED.clear();
@@ -1160,7 +1165,9 @@ public final class EioClient implements ClientModInitializer {
     private static boolean validAreaMineTarget(Minecraft mc, Mod area, BlockPos pos) {
         if (mc.player == null || mc.level == null || pos == null) return false;
         AreaRegion region = areaRegion(area);
-        if (region == null || !region.supportedSize() || !region.containsPlane(pos, areaStageIndex, areaLayerIndex)) return false;
+        if (region == null || !region.supportedSize()) return false;
+        // Hard invariant: Area Miner may never target outside the current five-block band.
+        if (!region.containsStage(pos, areaStageIndex) || !region.containsPlane(pos, areaStageIndex, areaLayerIndex)) return false;
         if (!withinVanillaBlockRange(mc, pos)) return false;
         var state = mc.level.getBlockState(pos);
         if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
@@ -1177,9 +1184,11 @@ public final class EioClient implements ClientModInitializer {
     private static BlockPos currentAreaLookTarget(Minecraft mc, Mod area) {
         if (mc.player == null || mc.level == null || !(mc.hitResult instanceof BlockHitResult hit)) return null;
         BlockPos looked = hit.getBlockPos();
-        if (!validAreaMineTarget(mc, area, looked)) return null;
         AreaRegion region = areaRegion(area);
-        if (region == null) return null;
+        if (region == null || areaStageIndex < 0 || areaStageIndex >= region.stageCount()) return null;
+        // Never accept a crosshair block above/below the active five-block band.
+        if (looked.getY() > region.stageTopY(areaStageIndex) || looked.getY() < region.stageBottomY(areaStageIndex)) return null;
+        if (!validAreaMineTarget(mc, area, looked)) return null;
         int cells = region.navigationCells();
         int from = Math.max(0, Math.min(areaNavIndex, Math.max(0, cells - 1)));
         int to = Math.min(cells, from + 3);
@@ -1199,6 +1208,22 @@ public final class EioClient implements ClientModInitializer {
                 BlockPos pos = new BlockPos(x, y, z);
                 var state = mc.level.getBlockState(pos);
                 if (!state.isAir() && state.getDestroySpeed(mc.level, pos) >= 0.0f) return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean areaStageHasBlocks(Minecraft mc, AreaRegion region, int stage) {
+        if (mc.level == null || region == null || stage < 0 || stage >= region.stageCount()) return false;
+        int top = region.stageTopY(stage);
+        int bottom = region.stageBottomY(stage);
+        for (int y = top; y >= bottom; y--) {
+            for (int z = region.minZ; z <= region.maxZ; z++) {
+                for (int x = region.minX; x <= region.maxX; x++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    var state = mc.level.getBlockState(pos);
+                    if (!state.isAir() && state.getDestroySpeed(mc.level, pos) >= 0.0f) return true;
+                }
             }
         }
         return false;
@@ -1240,6 +1265,34 @@ public final class EioClient implements ClientModInitializer {
         AREA_MINE_SKIPPED.clear();
 
         if (areaLayerIndex >= region.stageLayerCount(areaStageIndex)) {
+            int completedStage = areaStageIndex;
+            // Do not descend even one block into the next band until every breakable block
+            // in this five-block band has been cleared. This is the stage barrier.
+            if (areaStageHasBlocks(mc, region, completedStage)) {
+                areaStageSweeps++;
+                if (areaStageSweeps <= 3) {
+                    areaLayerIndex = 0;
+                    areaNavIndex = 0;
+                    areaMoveTicks = 0;
+                    areaMinedThisPass = 0;
+                    areaStallPasses = 0;
+                    areaMineTarget = null;
+                    areaMineAimTicks = 0;
+                    areaMineRearmTicks = 1;
+                    AREA_MINE_SKIPPED.clear();
+                    notifyMessage("AREA MINER: FINISHING BAND Y " + region.stageTopY(completedStage)
+                            + ".." + region.stageBottomY(completedStage), 0xFF74C8F0, 1800L);
+                    return true;
+                }
+                area.enabled = false;
+                save();
+                notifyMessage("AREA MINER PAUSED: ACTIVE 5-BLOCK BAND IS NOT CLEAR", 0xFFFFB36B, 4200L);
+                appendDiagnostic("AREA_MINER stage_gate_stall stage=" + (completedStage + 1)
+                        + " band=" + region.stageTopY(completedStage) + ".." + region.stageBottomY(completedStage));
+                return true;
+            }
+
+            areaStageSweeps = 0;
             areaStageIndex++;
             areaLayerIndex = 0;
             if (areaStageIndex >= region.stageCount()) {
@@ -1249,8 +1302,8 @@ public final class EioClient implements ClientModInitializer {
                 notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3200L);
                 return true;
             }
-            notifyMessage("AREA MINER: STARTING STAGE " + (areaStageIndex + 1) + "/" + region.stageCount()
-                    + " AT Y " + region.stageLayerY(areaStageIndex, 0), 0xFF74C8F0, 2400L);
+            notifyMessage("AREA MINER: BAND CLEAR - DESCENDING TO Y " + region.stageTopY(areaStageIndex)
+                    + ".." + region.stageBottomY(areaStageIndex), 0xFF74C8F0, 2400L);
             return true;
         }
 
