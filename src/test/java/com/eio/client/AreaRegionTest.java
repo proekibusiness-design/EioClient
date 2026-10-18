@@ -14,11 +14,21 @@ final class AreaRegionTest {
         assertEquals(12, r.maxX);
         assertEquals(-3, r.minZ);
         assertEquals(4, r.maxZ);
-        assertEquals(70, r.topY);
-        assertEquals(65, r.bottomY);
+        assertEquals(69, r.topY);
+        assertEquals(64, r.bottomY);
         assertEquals(5, r.width());
         assertEquals(8, r.length());
         assertEquals(6, r.depth());
+    }
+
+    @Test
+    void cornerStandingPositionStartsMiningAtBlockUnderFeet() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(2, 70, 2), 5);
+        assertNotNull(r);
+        assertEquals(69, r.topY);
+        assertEquals(65, r.bottomY);
+        assertTrue(r.contains(new BlockPos(1, 69, 1)));
+        assertFalse(r.contains(new BlockPos(1, 70, 1)));
     }
 
     @Test
@@ -32,12 +42,12 @@ final class AreaRegionTest {
     @Test
     void serpentineNavigationDoesNotLeaveBounds() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(2, 64, 1), 2);
-        assertEquals(new BlockPos(0, 64, 0), r.navigationCell(0, 64));
-        assertEquals(new BlockPos(1, 64, 0), r.navigationCell(1, 64));
-        assertEquals(new BlockPos(2, 64, 0), r.navigationCell(2, 64));
-        assertEquals(new BlockPos(2, 64, 1), r.navigationCell(3, 64));
-        assertEquals(new BlockPos(1, 64, 1), r.navigationCell(4, 64));
-        assertEquals(new BlockPos(0, 64, 1), r.navigationCell(5, 64));
+        assertEquals(new BlockPos(0, 63, 0), r.navigationCell(0, 64));
+        assertEquals(new BlockPos(1, 63, 0), r.navigationCell(1, 64));
+        assertEquals(new BlockPos(2, 63, 0), r.navigationCell(2, 64));
+        assertEquals(new BlockPos(2, 63, 1), r.navigationCell(3, 64));
+        assertEquals(new BlockPos(1, 63, 1), r.navigationCell(4, 64));
+        assertEquals(new BlockPos(0, 63, 1), r.navigationCell(5, 64));
     }
 
     @Test
@@ -51,9 +61,9 @@ final class AreaRegionTest {
             assertEquals(1, manhattan, "serpentine path must not jump between lane cells");
             previous = next;
         }
-        assertEquals(new BlockPos(1, 70, 5), r.navigationCell(3, 70));
-        assertEquals(new BlockPos(1, 70, 6), r.navigationCell(4, 70));
-        assertEquals(new BlockPos(0, 70, 6), r.navigationCell(5, 70));
+        assertEquals(new BlockPos(1, 69, 5), r.navigationCell(3, 70));
+        assertEquals(new BlockPos(1, 69, 6), r.navigationCell(4, 70));
+        assertEquals(new BlockPos(0, 69, 6), r.navigationCell(5, 70));
     }
 
     @Test
@@ -76,27 +86,27 @@ final class AreaRegionTest {
         assertFalse(r.supportedSize());
         assertEquals(0, r.navigationCells());
     }
+
     @Test
     void startsSerpentineAtCornerAInEitherDirection() {
         AreaRegion r = AreaRegion.from(new BlockPos(2, 64, 1), new BlockPos(0, 64, 0), 6);
-        assertEquals(new BlockPos(2, 64, 1), r.navigationCell(0, 64));
-        assertEquals(new BlockPos(1, 64, 1), r.navigationCell(1, 64));
-        assertEquals(new BlockPos(0, 64, 1), r.navigationCell(2, 64));
-        assertEquals(new BlockPos(0, 64, 0), r.navigationCell(3, 64));
-        assertEquals(new BlockPos(1, 64, 0), r.navigationCell(4, 64));
-        assertEquals(new BlockPos(2, 64, 0), r.navigationCell(5, 64));
+        assertEquals(new BlockPos(2, 63, 1), r.navigationCell(0, 64));
+        assertEquals(new BlockPos(1, 63, 1), r.navigationCell(1, 64));
+        assertEquals(new BlockPos(0, 63, 1), r.navigationCell(2, 64));
+        assertEquals(new BlockPos(0, 63, 0), r.navigationCell(3, 64));
+        assertEquals(new BlockPos(1, 63, 0), r.navigationCell(4, 64));
+        assertEquals(new BlockPos(2, 63, 0), r.navigationCell(5, 64));
     }
 
     @Test
     void splitsDepthIntoFiveBlockStagesFromSurface() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(1, 70, 1), 12);
         assertEquals(3, r.stageCount(5));
-        assertEquals(70, r.stageTopY(0, 5));
-        assertEquals(66, r.stageBottomY(0, 5));
-        assertEquals(65, r.stageTopY(1, 5));
-        assertEquals(61, r.stageBottomY(1, 5));
-        assertEquals(60, r.stageTopY(2, 5));
-        assertEquals(59, r.stageBottomY(2, 5));
+        assertEquals(69, r.stageTopY(0, 5));
+        assertEquals(65, r.stageBottomY(0, 5));
+        assertEquals(64, r.stageTopY(1, 5));
+        assertEquals(60, r.stageBottomY(1, 5));
+        assertEquals(59, r.stageTopY(2, 5));
+        assertEquals(58, r.stageBottomY(2, 5));
     }
-
 }
