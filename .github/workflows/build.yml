@@ -30,29 +30,45 @@ jobs:
           from pathlib import Path
           p=Path('eio26/EioClient.java')
           s=p.read_text()
-          old_id='public static final String BUILD_ID = "EIO-015-QA1";'
-          if old_id in s:
-              s=s.replace(old_id, 'public static final String BUILD_ID = "EIO-015-QA2";', 1)
+          if 'public static final String BUILD_ID = "EIO-015-QA1";' in s:
+              s=s.replace('public static final String BUILD_ID = "EIO-015-QA1";', 'public static final String BUILD_ID = "EIO-015-QA2";', 1)
           elif 'public static final String BUILD_ID = "EIO-015-QA2";' not in s:
               raise SystemExit('unexpected build id')
-          old='''            for (Setting s : m.settings) {
-                String v = p.getProperty("setting." + m.name + "." + s.name); if (v == null) continue;
-                try { if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v); if (s instanceof NumSetting n) n.set(Double.parseDouble(v)); } catch (Exception ignored) {}
-            }'''
-          new='''            for (Setting s : m.settings) {
-                if (s instanceof BoolSetting b) b.value = b.defaultValue;
-                else if (s instanceof NumSetting n) n.set(n.defaultValue);
-                String v = p.getProperty("setting." + m.name + "." + s.name);
-                if (v == null) continue;
-                try {
-                    if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v);
-                    else if (s instanceof NumSetting n) n.set(Double.parseDouble(v));
-                } catch (Exception ignored) {}
-            }'''
-          if old in s:
-              s=s.replace(old,new,1)
-          elif new not in s:
-              raise SystemExit('reload patch target not found')
+          start=s.index('    private static void load() {')
+          end=s.index('    private static void save() {', start)
+          block=s[start:end]
+          if 'b.value = b.defaultValue;' not in block:
+              lines=block.splitlines()
+              out=[]
+              in_settings=False
+              transformed=False
+              for line in lines:
+                  if 'for (Setting s : m.settings) {' in line and not transformed:
+                      out.append(line)
+                      indent=line[:len(line)-len(line.lstrip())]+'    '
+                      out.append(indent+'if (s instanceof BoolSetting b) b.value = b.defaultValue;')
+                      out.append(indent+'else if (s instanceof NumSetting n) n.set(n.defaultValue);')
+                      in_settings=True
+                      continue
+                  if in_settings and 'String v = p.getProperty("setting." + m.name + "." + s.name); if (v == null) continue;' in line:
+                      indent=line[:len(line)-len(line.lstrip())]
+                      out.append(indent+'String v = p.getProperty("setting." + m.name + "." + s.name);')
+                      out.append(indent+'if (v == null) continue;')
+                      continue
+                  if in_settings and 'try { if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v); if (s instanceof NumSetting n) n.set(Double.parseDouble(v)); } catch (Exception ignored) {}' in line:
+                      indent=line[:len(line)-len(line.lstrip())]
+                      out.append(indent+'try {')
+                      out.append(indent+'    if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v);')
+                      out.append(indent+'    else if (s instanceof NumSetting n) n.set(Double.parseDouble(v));')
+                      out.append(indent+'} catch (Exception ignored) {}')
+                      transformed=True
+                      in_settings=False
+                      continue
+                  out.append(line)
+              if not transformed:
+                  raise SystemExit('reload loop transformation failed')
+              newblock='\n'.join(out)+'\n'
+              s=s[:start]+newblock+s[end:]
           p.write_text(s)
           PY
 
