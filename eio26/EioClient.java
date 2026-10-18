@@ -38,7 +38,7 @@ import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
     public static final String VERSION = "0.15.0";
-    public static final String BUILD_ID = "EIO-015-QA1";
+    public static final String BUILD_ID = "EIO-015-QA2";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path TEST_LOG = FabricLoader.getInstance().getConfigDir().resolve("eio-test-session.log");
@@ -765,8 +765,14 @@ public final class EioClient implements ClientModInitializer {
             String enabledDefault = m.name.equals("Notifications") ? "true" : "false";
             m.enabled = Boolean.parseBoolean(p.getProperty("enabled." + m.name, enabledDefault));
             for (Setting s : m.settings) {
-                String v = p.getProperty("setting." + m.name + "." + s.name); if (v == null) continue;
-                try { if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v); if (s instanceof NumSetting n) n.set(Double.parseDouble(v)); } catch (Exception ignored) {}
+                if (s instanceof BoolSetting b) b.value = b.defaultValue;
+                else if (s instanceof NumSetting n) n.set(n.defaultValue);
+                String v = p.getProperty("setting." + m.name + "." + s.name);
+                if (v == null) continue;
+                try {
+                    if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v);
+                    else if (s instanceof NumSetting n) n.set(Double.parseDouble(v));
+                } catch (Exception ignored) {}
             }
         }
         WAYPOINTS.clear();
