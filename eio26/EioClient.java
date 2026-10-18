@@ -41,7 +41,7 @@ import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
     public static final String VERSION = "0.26.0";
-    public static final String BUILD_ID = "EIO-026-AREA1";
+    public static final String BUILD_ID = "EIO-026-AREA2";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -245,14 +245,14 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Exposed Only", true, "Only target blocks with at least one exposed face.")
                 .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the active Nuker target.");
-        mod("Area Miner", "Mining", "Mines a user-defined rectangular area to a chosen depth and can move through the selected coordinates.", -1)
+        mod("Area Miner", "Mining", "Serpentine tunnel miner: clears the next lane cell straight ahead, moves into it, turns at the boundary, shifts one cell and works back across the selected zone.", -1)
                 .point("Corner A", "Stand at the first horizontal corner and left-click this row to set it here. Right-click clears it.")
                 .point("Corner B", "Stand at the opposite horizontal corner and left-click this row to set it here. Right-click clears it.")
-                .num("Depth", 8.0, 1.0, 64.0, 1.0, "Number of blocks to mine downward from the higher corner Y level.")
+                .num("Depth", 8.0, 1.0, 64.0, 1.0, "Vertical depth included in the selected zone. Area Miner only targets the current serpentine lane column instead of mining surrounding blocks.")
                 .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next area target.")
                 .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to line up with a target before temporarily skipping it.")
                 .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
-                .bool("Auto Move", true, "Move through the configured rectangle when no mineable block is currently in normal interaction range.")
+                .bool("Auto Move", true, "Walk the serpentine lane path after the block column directly ahead is clear.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating between cells.")
                 .bool("Auto Jump", true, "Jump over simple one-block obstacles while Area Miner is moving.")
                 .bool("Exposed Only", true, "Mine only blocks with an air-adjacent face, exposing deeper layers progressively.")
@@ -591,7 +591,6 @@ public final class EioClient implements ClientModInitializer {
                 if (setting instanceof BoolSetting b) b.value = b.defaultValue;
                 else if (setting instanceof NumSetting n) n.set(n.defaultValue);
                 else if (setting instanceof MobListSetting ml) ml.reset();
-            else if (setting instanceof PointSetting point) point.reset();
                 else if (setting instanceof PointSetting point) point.reset();
                 if (setting instanceof MobListSetting ml) {
                     ml.loadDisabledCsv(p.getProperty("mobfilter." + m.name + "." + setting.name, ""));
@@ -1154,7 +1153,7 @@ public final class EioClient implements ClientModInitializer {
         AreaRegion region = areaRegion(area);
         if (region == null) return "Area Miner: set Corner A and Corner B";
         if (!region.supportedSize()) return "Area Miner: maximum supported area is " + AreaRegion.MAX_SIDE + "x" + AreaRegion.MAX_SIDE;
-        return "Area Miner: " + region.summary() + (areaComplete ? " | complete" : " | nav " + (areaNavIndex + 1) + "/" + region.navigationCells());
+        return "Area Miner: " + region.summary() + (areaComplete ? " | complete" : " | lane " + Math.min(region.navigationCells(), areaNavIndex + 1) + "/" + region.navigationCells());
     }
 
     private static void resetAreaRuntime() {
@@ -1183,22 +1182,23 @@ public final class EioClient implements ClientModInitializer {
         if (mc.player == null || mc.level == null) return null;
         AreaRegion region = areaRegion(area);
         if (region == null || !region.supportedSize()) return null;
-        BlockPos origin = mc.player.blockPosition();
-        int radius = 6;
+        int cells = region.navigationCells();
+        if (cells <= 0 || areaNavIndex < 0 || areaNavIndex >= cells) return null;
+
+        // AREA2: only clear the column for the current serpentine lane cell. This deliberately
+        // avoids the old radius scan that could turn around and mine unrelated blocks behind/aside.
+        BlockPos lane = region.navigationCell(areaNavIndex, mc.player.blockPosition().getY());
+        if (lane == null) return null;
         BlockPos best = null;
         double bestSq = Double.MAX_VALUE;
-        for (int dy = -radius; dy <= radius; dy++) {
-            for (int dx = -radius; dx <= radius; dx++) {
-                for (int dz = -radius; dz <= radius; dz++) {
-                    BlockPos pos = origin.offset(dx, dy, dz);
-                    if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
-                    double px = pos.getX() + 0.5 - mc.player.getX();
-                    double py = pos.getY() + 0.5 - mc.player.getY();
-                    double pz = pos.getZ() + 0.5 - mc.player.getZ();
-                    double d = px * px + py * py + pz * pz;
-                    if (d < bestSq) { bestSq = d; best = pos.immutable(); }
-                }
-            }
+        for (int y = region.topY; y >= region.bottomY; y--) {
+            BlockPos pos = new BlockPos(lane.getX(), y, lane.getZ());
+            if (AREA_MINE_SKIPPED.contains(pos) || !validAreaMineTarget(mc, area, pos)) continue;
+            double px = pos.getX() + 0.5 - mc.player.getX();
+            double py = pos.getY() + 0.5 - mc.player.getEyeY();
+            double pz = pos.getZ() + 0.5 - mc.player.getZ();
+            double d = px * px + py * py + pz * pz;
+            if (d < bestSq) { bestSq = d; best = pos.immutable(); }
         }
         return best;
     }
@@ -1206,13 +1206,6 @@ public final class EioClient implements ClientModInitializer {
     private static boolean updateAreaNavigation(Minecraft mc, Mod area) {
         if (mc.player == null || mc.level == null || !areaConfigured(area) || areaComplete) return false;
         if (areaMineTarget != null || areaMineRearmTicks > 0) { areaMoveTicks = 0; return false; }
-        BlockPos reachable = findAreaMineTarget(mc, area);
-        if (reachable != null) {
-            areaMineTarget = reachable;
-            areaMineAimTicks = 0;
-            areaMoveTicks = 0;
-            return false;
-        }
         AreaRegion region = areaRegion(area);
         if (region == null) return false;
 
@@ -1221,6 +1214,7 @@ public final class EioClient implements ClientModInitializer {
                 || pz < region.minZ + 0.15 || pz > region.maxZ + 0.85;
         double goalX, goalZ;
         if (outside) {
+            // Enter at the nearest point in the configured zone before taking ownership of the lane path.
             goalX = region.clampX(px) + 0.5;
             goalZ = region.clampZ(pz) + 0.5;
         } else {
@@ -1232,14 +1226,29 @@ public final class EioClient implements ClientModInitializer {
                     area.enabled = false;
                     save();
                     notifyMessage("AREA MINER COMPLETE", 0xFF75DDA8, 3000L);
+                    appendDiagnostic("AREA_MINER complete " + region.summary());
                     return false;
                 }
+                // One serpentine pass exposed/mined more blocks. Start the same lanes again so
+                // deeper configured blocks become reachable without ever radius-mining around the player.
                 areaNavIndex = 0;
                 areaMinedThisPass = 0;
                 AREA_MINE_SKIPPED.clear();
             }
+
             BlockPos nav = region.navigationCell(areaNavIndex, mc.player.blockPosition().getY());
             if (nav == null) return false;
+
+            // Mine the current lane column before walking into it. At row boundaries navigationCell()
+            // supplies the adjacent shift cell followed by the reverse lane, producing the U-turn pattern.
+            BlockPos forwardBlock = findAreaMineTarget(mc, area);
+            if (forwardBlock != null) {
+                areaMineTarget = forwardBlock;
+                areaMineAimTicks = 0;
+                areaMoveTicks = 0;
+                return false;
+            }
+
             goalX = nav.getX() + 0.5;
             goalZ = nav.getZ() + 0.5;
         }
@@ -1641,6 +1650,7 @@ public final class EioClient implements ClientModInitializer {
             if (setting instanceof BoolSetting b) b.value = b.defaultValue;
             else if (setting instanceof NumSetting n) n.set(n.defaultValue);
             else if (setting instanceof MobListSetting ml) ml.reset();
+            else if (setting instanceof PointSetting point) point.reset();
         }
     }
 
