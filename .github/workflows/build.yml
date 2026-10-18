@@ -68,10 +68,11 @@ jobs:
         run: gradle clean test build --stacktrace --warning-mode all
 
       - name: Real 26.3 client + integrated-server GameTest
+        timeout-minutes: 3
         shell: bash
         run: |
           set -euo pipefail
-          xvfb-run -a gradle runClientGameTest --stacktrace --warning-mode all
+          timeout --signal=TERM --kill-after=15s 150s xvfb-run -a gradle runClientGameTest --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
