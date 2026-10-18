@@ -1,4 +1,4 @@
-name: EioClient 0.30 strict Area Miner stage gate
+name: Build EioClient 0.30 final
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply strict five-block stage fix
-        run: python3 .github/eio030_stage_fix.py
 
       - name: Static stage and GUI QA
         shell: bash
@@ -53,11 +50,10 @@ jobs:
           assert 'static final int STAGE_DEPTH = 5;' in r
           assert 'stageBandsAreStrictAndNonOverlapping' in t
           assert 'clearsPlanesTopDownInsideFiveBlockStages' in t
-          # No regression to old whole-depth/random area scanner.
           assert 'findAreaMineTarget' not in s
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          print('0.30 strict stage QA passed; modules=',len(mods))
+          print('0.30 final static QA passed; modules=',len(mods))
           PY
 
       - name: Unit tests and native Fabric build
@@ -91,7 +87,7 @@ jobs:
           for token in 'EIO-030-STAGE1' 'Area Miner' 'ACTIVE 5-BLOCK BAND IS NOT CLEAR' 'BAND CLEAR - DESCENDING TO Y' 'GUI=760x430 modern-nav-glass'; do
             grep -Fq "$token" /tmp/main.strings
           done
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -107,22 +103,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.30 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties src/test/java/com/eio/client/AreaRegionTest.java
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.30 strict five-block Area Miner stages'
-            git push origin HEAD:fix/0.30-area-miner-stage-gate
-          fi
-
-      - name: Upload 0.30 candidate
+      - name: Upload final 0.30 JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.30.0-stage-gate
+          name: EioClient-26.3-v0.30.0-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
