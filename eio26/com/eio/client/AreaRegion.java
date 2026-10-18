@@ -13,31 +13,50 @@ final class AreaRegion {
     final int maxX;
     final int minZ;
     final int maxZ;
+    final int surfaceY;
     final int topY;
     final int bottomY;
 
-    private AreaRegion(int minX, int maxX, int minZ, int maxZ, int topY, int bottomY) {
+    private AreaRegion(int minX, int maxX, int minZ, int maxZ, int surfaceY, int topY, int bottomY) {
         this.minX = minX;
         this.maxX = maxX;
         this.minZ = minZ;
         this.maxZ = maxZ;
+        this.surfaceY = surfaceY;
         this.topY = topY;
         this.bottomY = bottomY;
     }
 
     static AreaRegion from(BlockPos a, BlockPos b, int depth) {
         if (a == null || b == null) return null;
-        int safeDepth = Math.max(1, Math.min(64, depth));
-        int top = Math.max(a.getY(), b.getY());
+        int safeDepth = Math.max(5, Math.min(64, depth));
+        int surface = Math.max(a.getY(), b.getY());
+        int mineTop = surface - 1;
         return new AreaRegion(
                 Math.min(a.getX(), b.getX()), Math.max(a.getX(), b.getX()),
                 Math.min(a.getZ(), b.getZ()), Math.max(a.getZ(), b.getZ()),
-                top, top - safeDepth + 1);
+                surface, mineTop, surface - safeDepth);
     }
 
     int width() { return maxX - minX + 1; }
     int length() { return maxZ - minZ + 1; }
     int depth() { return topY - bottomY + 1; }
+
+    int layerCount() { return (depth() + 4) / 5; }
+
+    int layerTop(int layer) {
+        if (layer < 0 || layer >= layerCount()) throw new IllegalArgumentException("layer " + layer);
+        return topY - layer * 5;
+    }
+
+    int layerBottom(int layer) {
+        return Math.max(bottomY, layerTop(layer) - 4);
+    }
+
+    boolean containsInLayer(BlockPos pos, int layer) {
+        return contains(pos) && layer >= 0 && layer < layerCount()
+                && pos.getY() <= layerTop(layer) && pos.getY() >= layerBottom(layer);
+    }
 
     boolean supportedSize() {
         return width() > 0 && length() > 0 && width() <= MAX_SIDE && length() <= MAX_SIDE;
@@ -71,6 +90,7 @@ final class AreaRegion {
 
     String summary() {
         return minX + "," + minZ + " -> " + maxX + "," + maxZ
-                + " | Y " + topY + ".." + bottomY + " | " + width() + "x" + length() + "x" + depth();
+                + " | surfaceY " + surfaceY + " | mineY " + topY + ".." + bottomY
+                + " | " + width() + "x" + length() + "x" + depth();
     }
 }
