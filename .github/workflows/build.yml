@@ -1,4 +1,4 @@
-name: Build EioClient
+name: Build EioClient 26.3
 
 on:
   push:
@@ -14,19 +14,67 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: Set up Java 25
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.11.1'
+          gradle-version: '9.6.0'
 
-      - name: Extract project
-        run: unzip -q eioclient-legit-0.3.0.zip -d extracted
+      - name: Extract and configure 26.3 project
+        shell: bash
+        run: |
+          unzip -q eioclient-legit-0.3.0.zip -d extracted
+          cd extracted/eioclient
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2G
+          org.gradle.parallel=true
+          minecraft_version=26.3
+          loader_version=0.19.5
+          fabric_version=0.163.0+26.3
+          loom_version=1.17.11
+          mod_version=0.3.0+26.3
+          maven_group=com.eio
+          archives_base_name=eioclient
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins {
+              id 'net.fabricmc.fabric-loom' version "${loom_version}"
+              id 'maven-publish'
+          }
+          version = project.mod_version
+          group = project.maven_group
+          base { archivesName = project.archives_base_name }
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+          }
+          processResources {
+              inputs.property "version", project.version
+              filesMatching("fabric.mod.json") { expand "version": inputs.properties.version }
+          }
+          tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
+          java {
+              withSourcesJar()
+              sourceCompatibility = JavaVersion.VERSION_25
+              targetCompatibility = JavaVersion.VERSION_25
+          }
+          EOF
+          python3 - <<'PY'
+          import json
+          p='src/main/resources/fabric.mod.json'
+          d=json.load(open(p))
+          d['depends']['fabricloader']='>=0.19.5'
+          d['depends']['minecraft']='~26.3'
+          d['depends']['java']='>=25'
+          d['depends']['fabric-api']='*'
+          open(p,'w').write(json.dumps(d, indent=2)+'\n')
+          PY
 
       - name: Build
         working-directory: extracted/eioclient
@@ -36,6 +84,8 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-JAR
-          path: extracted/eioclient/build/libs/*.jar
+          name: EioClient-26.3-JAR
+          path: |
+            extracted/eioclient/build/libs/*.jar
+            !extracted/eioclient/build/libs/*-sources.jar
           if-no-files-found: error
