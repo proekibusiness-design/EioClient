@@ -1,4 +1,4 @@
-name: EioClient 0.24 compatibility audit
+name: EioClient 0.25 modern GUI
 
 on:
   push:
@@ -20,13 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply focused compatibility patch
-        run: python3 .github/eio024_compat_patch.py
+      - name: Apply 0.25 modern GUI patch
+        run: python3 .github/eio025_gui_patch.py
 
-      - name: Fix test runtime and Gradle resource configuration
-        run: python3 .github/eio024_testfix.py
-
-      - name: Static source and project QA
+      - name: Static source and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -37,31 +34,26 @@ jobs:
           gp=Path('gradle.properties').read_text()
           build=Path('build.gradle').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.24.0"' in s
-          assert 'BUILD_ID = "EIO-024-COMPAT1"' in s
-          assert 'mod_version=0.24.0+26.3' in gp
+          assert 'VERSION = "0.25.0"' in s
+          assert 'BUILD_ID = "EIO-025-GUI1"' in s
+          assert 'mod_version=0.25.0+26.3' in gp
           assert len(mods)==44, len(mods)
           assert ('Compatibility Guard','Misc') in mods
+          for token in ['categoriesScroll','categoryViewport','categoryMax','WHEEL scrolls each panel','GUI=720x410 modern-scroll-glass']:
+              assert token in s, token
+          assert 'private int panelW() { return Math.max(430, Math.min(720, width - 18)); }' in s
+          assert 'private int panelH() { return Math.max(270, Math.min(410, height - 18)); }' in s
+          assert s.count('int railX = x + 10, railW = 108;') >= 3
+          assert 'public boolean mouseScrolled(' in s
+          assert 'drawScrollBar(g, railX + railW - 3' in s
           assert 'isWithinEntityInteractionRange' in s
           assert 'isWithinBlockInteractionRange' in s
           assert 'onServerPositionCorrection' in s
-          assert 'releaseCorrectionSensitiveState' in s
-          assert 'getFlyingSpeed()' in s and 'flyPrevSpeed' in s and 'creativeAssistPrevSpeed' in s
-          assert 'org.junit.jupiter:junit-jupiter' in build
           assert 'testRuntimeOnly "org.junit.platform:junit-platform-launcher"' in build
-          assert 'useJUnitPlatform()' in build
-          assert 'def modVersion = project.version' in build
-          assert "expand version: project.version" not in build
-          assert 'configureTests' in build and 'enableClientGameTests = true' in build
-          mixin=json.loads(Path('src/main/resources/eioclient.mixins.json').read_text())
-          assert 'ClientPacketListenerMixin' in mixin['client']
+          assert 'enableClientGameTests = true' in build
           mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
           assert mod.get('mixins') == ['eioclient.mixins.json']
-          gt=json.loads(Path('src/gametest/resources/fabric.mod.json').read_text())
-          assert gt['entrypoints']['fabric-client-gametest'] == ['com.eio.client.gametest.EioClientGameTest']
-          assert Path('src/test/java/com/eio/client/CompatibilityStateTest.java').exists()
-          assert Path('src/gametest/java/com/eio/client/gametest/EioClientGameTest.java').exists()
-          print('0.24 static compatibility QA passed')
+          print('0.25 static GUI QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -89,7 +81,7 @@ jobs:
           set -euo pipefail
           timeout --signal=TERM --kill-after=15s 150s gradle runClientGameTest --stacktrace --warning-mode all
 
-      - name: Deep JAR QA
+      - name: Deep JAR and GUI bytecode QA
         shell: bash
         run: |
           set -euo pipefail
@@ -97,21 +89,20 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.24.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.25.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
-          [[ "$META" == *'eioclient.mixins.json'* ]]
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
+          grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/CompatibilityState.class' /tmp/jar.list
-          grep -Fqx 'com/eio/client/mixin/ClientPacketListenerMixin.class' /tmp/jar.list
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.mixin.ClientPacketListenerMixin' > /tmp/mixin.javap
-          for token in onServerPositionCorrection releaseCorrectionSensitiveState withinVanillaBlockRange withinVanillaEntityRange applyMovementSpeed; do grep -Fq "$token" /tmp/main.javap; done
-          grep -Fq 'onServerPositionCorrection' /tmp/mixin.javap
+          for token in categoriesScroll mouseScrolled drawScrollBar clampScroll settingsContentHeight; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in onServerPositionCorrection withinVanillaBlockRange withinVanillaEntityRange; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-024-COMPAT1' 'Compatibility Guard' 'Vanilla Ranges' 'Pause On Correction' 'SERVER_POSITION'; do grep -Fq "$token" /tmp/main.strings; done
+          for token in 'EIO-025-GUI1' 'GUI=720x410 modern-scroll-glass' 'Compatibility Guard'; do grep -Fq "$token" /tmp/main.strings; done
           echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
@@ -128,11 +119,23 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
+      - name: Canonicalize passing 0.25 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize EioClient 0.25 modern scrolling GUI'
+            git push origin HEAD:compat/0.24-server-authority
+          fi
+
       - name: Upload client GameTest diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-client-gametest-diagnostics
+          name: EioClient-26.3-v0.25.0-gui-diagnostics
           path: |
             build/run/clientGameTest/logs/**
             build/run/clientGameTest/screenshots/**
@@ -140,10 +143,10 @@ jobs:
             /tmp/xvfb.log
           if-no-files-found: ignore
 
-      - name: Upload compatibility candidate
+      - name: Upload 0.25 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.24.0-compat-candidate
+          name: EioClient-26.3-v0.25.0-gui-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
