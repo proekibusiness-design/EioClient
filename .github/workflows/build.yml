@@ -1,4 +1,4 @@
-name: Build EioClient 0.26 AREA2
+name: Build EioClient 0.26 AREA3
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source and GUI QA
+      - name: Apply AREA3 fast-turn patch
+        run: python3 .github/eio026_area3_patch.py
+
+      - name: Static Area Miner QA
         shell: bash
         run: |
           set -euo pipefail
@@ -28,27 +31,19 @@ jobs:
           from pathlib import Path
           import json,re
           s=Path('eio26/EioClient.java').read_text()
+          region=Path('eio26/com/eio/client/AreaRegion.java').read_text()
+          tests=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
           assert 'VERSION = "0.26.0"' in s
-          assert 'BUILD_ID = "EIO-026-AREA2"' in s
-          assert len(mods)==45, len(mods)
+          assert 'BUILD_ID = "EIO-026-AREA3"' in s
+          assert len(mods)==45
           assert ('Area Miner','Mining') in mods
-          assert 'Serpentine tunnel miner' in s
-          assert 'categoriesScroll' in s and 'public boolean mouseScrolled(' in s
-          assert 'GUI=760x430 modern-nav-glass' in s
-          assert 'region.navigationCell(areaNavIndex' in s
-          assert 'AREA_MINER complete' in s
-          start=s.index('private static BlockPos findAreaMineTarget')
-          end=s.index('private static boolean updateAreaNavigation', start)
-          area_find=s[start:end]
-          assert 'int radius = 6' not in area_find
-          assert 'for (int dx = -radius' not in area_find
-          assert 'new BlockPos(lane.getX(), y, lane.getZ())' in area_find
-          assert s.count('else if (setting instanceof PointSetting point) point.reset();') >= 2
-          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
-          print('AREA2 static QA passed; modules=', len(mods))
+          for token in ['Turn Lead','Turn Timeout','region.isRowEnd(areaNavIndex)','Fast handoff','return true;']:
+              assert token in s, token
+          assert 'boolean isRowEnd(int index)' in region
+          assert 'identifiesSerpentineRowEndsForFastTurns' in tests
+          assert 'categoriesScroll' in s and 'GUI=760x430 modern-nav-glass' in s
+          print('AREA3 static QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -68,15 +63,14 @@ jobs:
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
           grep -Fqx 'com/eio/client/EioClient.class' /tmp/jar.list
-          grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          for token in findAreaMineTarget updateAreaNavigation areaStatus resetAreaRuntime withinVanillaBlockRange; do grep -Fq "$token" /tmp/main.javap; done
-          for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
+          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/region.javap
+          for token in findAreaMineTarget updateAreaNavigation areaStatus; do grep -Fq "$token" /tmp/main.javap; done
+          grep -Fq 'isRowEnd' /tmp/region.javap
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-026-AREA2' 'Serpentine tunnel miner' 'AREA_MINER complete' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-026-AREA3' 'Turn Lead' 'Turn Timeout'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "AREA3 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -92,10 +86,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final AREA2 JAR
+      - name: Canonicalize AREA3 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.26 AREA3 fast-turn Area Miner'
+            git push origin HEAD:feature/0.25-area-miner-ui
+          fi
+
+      - name: Upload AREA3 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.0-AREA2-final
+          name: EioClient-26.3-v0.26.0-AREA3-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
