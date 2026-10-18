@@ -3,15 +3,13 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - '.github/eio023_patch.py'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -21,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply Eio 0.23 upgrade
-        run: python3 .github/eio023_patch.py
 
       - name: Static source and project QA
         shell: bash
@@ -38,7 +33,7 @@ jobs:
           assert 'VERSION = "0.23.0"' in s
           assert 'BUILD_ID = "EIO-023-QA1"' in s
           assert 'mod_version=0.23.0+26.3' in gp
-          assert len(mods)==43, len(mods)
+          assert len(mods)==43
           assert [x for x in mods if x[0]=='Speed'] == [('Speed','Movement')]
           assert [x for x in mods if x[0]=='Nuker'] == [('Nuker','Mining')]
           assert '.num("Multiplier", 1.8, 1.0, 10.0, 0.1' in s
@@ -55,7 +50,7 @@ jobs:
           assert 'TODO' not in s and 'FIXME' not in s
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.nuker') == 'Nuker'
-          print('0.23 static QA passed: modules=',len(mods))
+          print('0.23 final static QA passed')
           PY
 
       - name: Native Java and Fabric build
@@ -71,6 +66,7 @@ jobs:
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.23.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
+          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
@@ -83,7 +79,7 @@ jobs:
           for token in 'EIO-023-QA1' 'Nuker' 'Multiplier' 'Retarget Delay' 'Aim Timeout' 'Chunk Miner'; do grep -Fq "$token" /tmp/main.strings; done
           ! grep -Fq 'Test Profile' /tmp/main.strings
           test "$(stat -c%s "$JAR")" -gt 45000
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -99,22 +95,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.23 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties src/main/resources/assets/eioclient/lang/en_us.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.23 Nuker release'
-            git push origin HEAD:main
-          fi
-
-      - name: Upload 0.23 candidate
+      - name: Upload final JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.23.0-candidate
+          name: EioClient-26.3-v0.23.0-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
