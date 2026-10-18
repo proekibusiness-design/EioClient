@@ -44,5 +44,6 @@
   "key.eioclient.tool_saver": "Tool Saver",
   "key.eioclient.mining_hud": "Mining HUD",
   "key.eioclient.nuker": "Nuker",
-  "key.eioclient.compatibility_guard": "Compatibility Guard"
+  "key.eioclient.compatibility_guard": "Compatibility Guard",
+  "key.eioclient.area_miner": "Area Miner"
 }
