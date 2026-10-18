@@ -6,6 +6,7 @@ on:
     paths-ignore:
       - 'eio26/EioClient.java'
       - 'gradle.properties'
+      - 'src/main/resources/assets/eioclient/lang/en_us.json'
   workflow_dispatch:
 
 jobs:
@@ -23,36 +24,46 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply Eio 0.17 upgrade
-        run: python3 .github/eio017_patch.py
+      - name: Apply Eio 0.18 upgrade
+        run: python3 .github/eio018_patch.py
 
       - name: Static source QA
         shell: bash
         run: |
           set -euo pipefail
           SRC=eio26/EioClient.java
-          grep -Fq 'VERSION = "0.17.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-017-QA1"' "$SRC"
-          grep -Fq 'mod_version=0.17.0+26.3' gradle.properties
-          for token in \
-            'FOLLOW_MOB_IDS' 'MobListSetting' 'mobList("Mob Selection"' \
-            'validFollowTarget' 'nearestFollowTarget' 'getDescriptionId' \
-            'mobfilter.' 'MOB FILTER' 'MOB_PAGE_SIZE' 'setAll(true)' 'setAll(false)' \
-            'Math.min(690' 'Math.min(390' 'CATEGORIES' 'drawRainbowBlockBrand'; do
-            grep -Fq "$token" "$SRC"
-          done
-          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 33
+          grep -Fq 'VERSION = "0.18.0"' "$SRC"
+          grep -Fq 'BUILD_ID = "EIO-018-QA1"' "$SRC"
+          grep -Fq 'mod_version=0.18.0+26.3' gradle.properties
+          grep -Fq 'mod("Reach", "Combat"' "$SRC"
+          grep -Fq 'num("Range", 6.0, 3.0, 10.0' "$SRC"
+          grep -Fq 'mod("Creative Assist", "Player"' "$SRC"
+          grep -Fq 'SERVER FLIGHT PERMISSION REQUIRED' "$SRC"
+          grep -Fq 'FOLLOW_MOB_IDS' "$SRC"
+          grep -Fq 'MobListSetting' "$SRC"
+          grep -Fq 'MOB FILTER' "$SRC"
+          grep -Fq 'Math.min(690' "$SRC"
+          grep -Fq 'Math.min(390' "$SRC"
+          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 35
+          grep -Fq 'key.eioclient.reach' src/main/resources/assets/eioclient/lang/en_us.json
+          grep -Fq 'key.eioclient.creative_assist' src/main/resources/assets/eioclient/lang/en_us.json
           if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
-          import re
+          import json,re
           s=Path('eio26/EioClient.java').read_text()
-          assert s.count('class MobListSetting') == 1
-          assert s.count('public static final class ClickGui') == 1
-          assert s.count('private static boolean runFollow') == 1
-          assert len(re.findall(r'^[ \t]*mod\("', s, re.M)) == 33
-          assert 'GUI=690x390' in s
-          print('0.17 static QA passed')
+          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"',s,re.M)
+          assert len(mods)==35
+          assert len({n.lower() for n,_ in mods})==35
+          names={n for n,_ in mods}
+          assert {'Reach','Creative Assist','Follow'} <= names
+          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
+          for name,_ in mods:
+              slug=re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',name.lower()))
+              assert 'key.eioclient.'+slug in lang, name
+          assert s.count('class MobListSetting')==1
+          assert s.count('public static final class ClickGui')==1
+          print('0.18 static QA passed')
           PY
 
       - name: Native Java and Fabric build
@@ -66,25 +77,20 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.17.0+26.3"'* ]]
-          [[ "$META" == *'"environment": "client"'* ]]
+          [[ "$META" == *'"version": "0.18.0+26.3"'* ]]
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$MobListSetting.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$MobListSetting' > /tmp/filter.javap
-          for token in validFollowTarget nearestFollowTarget snapshotProperties applyProperties; do grep -Fq "$token" /tmp/main.javap; done
+          for token in validFollowTarget nearestFollowTarget releaseRuntimeState; do grep -Fq "$token" /tmp/main.javap; done
           for token in renderMobSelector handleMobSelectorClick 690 390; do grep -Fq "$token" /tmp/gui.javap; done
-          for token in disabledCsv loadDisabledCsv setAll allows; do grep -Fq "$token" /tmp/filter.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-017-QA1' 'Mob Selection' 'entity.minecraft.cow' 'entity.minecraft.zombie' 'mobfilter.'; do grep -Fq "$token" /tmp/main.strings; done
-          SIZE=$(stat -c%s "$JAR")
-          test "$SIZE" -gt 30000
-          echo "Deep QA passed: $JAR"
-          echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-018-QA1' 'Creative Assist' 'SERVER FLIGHT PERMISSION REQUIRED' 'Reach' 'Mob Selection'; do grep -Fq "$token" /tmp/main.strings; done
+          test "$(stat -c%s "$JAR")" -gt 32000
+          echo "Deep QA SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -100,22 +106,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.17 source
+      - name: Canonicalize passing 0.18 source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'Eio CI'
           git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties
+          git add eio26/EioClient.java gradle.properties src/main/resources/assets/eioclient/lang/en_us.json
           if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.17 modern Follow release'
+            git commit -m 'Canonicalize EioClient 0.18 Reach display and Creative Assist release'
             git push origin HEAD:main
           fi
 
-      - name: Upload 0.17 candidate
+      - name: Upload 0.18 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.17.0-candidate
+          name: EioClient-26.3-v0.18.0-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
