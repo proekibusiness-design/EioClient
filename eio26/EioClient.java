@@ -37,8 +37,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.19.0";
-    public static final String BUILD_ID = "EIO-019-QA1";
+    public static final String VERSION = "0.20.0";
+    public static final String BUILD_ID = "EIO-020-QA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -107,7 +107,8 @@ public final class EioClient implements ClientModInitializer {
                 .num("FOV", 180.0, 30.0, 360.0, 15.0, "Horizontal field of view in degrees used for target selection.")
                 .bool("Players", true, "Allow player targets.")
                 .bool("Mobs", true, "Allow non-player living targets.")
-                .bool("Invisible", false, "Allow invisible living targets.");
+                .bool("Invisible", false, "Allow invisible living targets.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Kill Aura may target.");
         mod("Auto Clicker", "Combat", "Automatically attacks a valid target near your crosshair at the configured rate.", InputConstants.KEY_C)
                 .num("CPS", 10.0, 1.0, 20.0, 1.0, "Attack attempts per second.")
                 .num("Range", 4.5, 1.0, 6.0, 0.25, "Maximum distance used when selecting a click target.")
@@ -115,12 +116,14 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Players", true, "Allow attacks on players.")
                 .bool("Mobs", true, "Allow attacks on non-player living entities.")
                 .bool("Invisible", false, "Allow attacks on invisible living targets.")
-                .bool("Require Attack", false, "Only click while Minecraft's attack key is held.");
+                .bool("Require Attack", false, "Only click while Minecraft's attack key is held.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Auto Clicker may target.");
         mod("Reach", "Combat", "Shows the nearest allowed target inside a configurable 3-10 block radius without changing server hit distance.", -1)
                 .num("Range", 6.0, 3.0, 10.0, 0.25, "Target scan and display radius in blocks.")
                 .bool("Players", true, "Include players in Reach display targeting.")
                 .bool("Mobs", true, "Include non-player living entities in Reach display targeting.")
-                .bool("Invisible", false, "Include invisible living entities in Reach display targeting.");
+                .bool("Invisible", false, "Include invisible living entities in Reach display targeting.")
+                .mobList("Target Selection", FOLLOW_MOB_IDS, "Choose exactly which mob types Reach may display as targets.");
 
         mod("Sprint", "Movement", "Automatically sprints while moving forward.", InputConstants.KEY_R)
                 .bool("Hunger Check", true, "Only sprint when your food level is high enough.");
@@ -666,8 +669,7 @@ public final class EioClient implements ClientModInitializer {
                     clickTarget = hit.getEntity();
                 }
                 if (clickTarget == null) {
-                    clickTarget = nearestTarget(mc, clicker.num("Range").value, clicker.num("FOV").value,
-                            clicker.bool("Players").value, clicker.bool("Mobs").value, clicker.bool("Invisible").value);
+                    clickTarget = nearestTarget(mc, clicker, clicker.num("Range").value, clicker.num("FOV").value);
                 }
                 if (clickTarget != null) attack(mc, clickTarget);
             }
@@ -676,8 +678,7 @@ public final class EioClient implements ClientModInitializer {
         if (aura.enabled) {
             if (auraCooldown-- <= 0) {
                 auraCooldown = Math.max(1, (int) Math.round(aura.num("Delay").value));
-                Entity target = nearestTarget(mc, aura.num("Range").value, aura.num("FOV").value,
-                        aura.bool("Players").value, aura.bool("Mobs").value, aura.bool("Invisible").value);
+                Entity target = nearestTarget(mc, aura, aura.num("Range").value, aura.num("FOV").value);
                 if (target != null) attack(mc, target);
             }
         } else auraCooldown = 0;
@@ -704,13 +705,35 @@ public final class EioClient implements ClientModInitializer {
     }
 
     private static boolean validClickTarget(Minecraft mc, Mod clicker, Entity target) {
-        if (!(target instanceof LivingEntity) || !target.isAlive() || mc.player == null) return false;
-        if (target instanceof Player && !clicker.bool("Players").value) return false;
-        if (!(target instanceof Player) && !clicker.bool("Mobs").value) return false;
-        if (target.isInvisible() && !clicker.bool("Invisible").value) return false;
+        if (mc.player == null || !validModuleTarget(clicker, target)) return false;
         if (angleFromView(mc.player, target) > clicker.num("FOV").value / 2.0) return false;
         double r = clicker.num("Range").value;
         return mc.player.distanceToSqr(target) <= r * r;
+    }
+
+    private static boolean validModuleTarget(Mod selector, Entity target) {
+        if (selector == null || !(target instanceof LivingEntity) || !target.isAlive()) return false;
+        if (target instanceof Player) return selector.bool("Players").value && (!target.isInvisible() || selector.bool("Invisible").value);
+        if (!selector.bool("Mobs").value) return false;
+        if (target.isInvisible() && !selector.bool("Invisible").value) return false;
+        MobListSetting filter = selector.mobList("Target Selection");
+        String id = target.getType().getDescriptionId();
+        filter.touch(id);
+        return filter.allows(id);
+    }
+
+    private static Entity nearestTarget(Minecraft mc, Mod selector, double range, double fov) {
+        if (mc.player == null || mc.level == null) return null;
+        AABB box = mc.player.getBoundingBox().inflate(range);
+        Entity best = null;
+        double bestSq = range * range;
+        for (Entity e : mc.level.getEntities(mc.player, box, e -> e instanceof LivingEntity && e.isAlive())) {
+            if (!validModuleTarget(selector, e)) continue;
+            if (fov < 359.9 && angleFromView(mc.player, e) > fov / 2.0) continue;
+            double d = mc.player.distanceToSqr(e);
+            if (d <= bestSq) { bestSq = d; best = e; }
+        }
+        return best;
     }
 
     private static void attack(Minecraft mc, Entity target) {
@@ -1047,8 +1070,7 @@ public final class EioClient implements ClientModInitializer {
         }
         if (find("Reach").enabled) {
             Mod reach = find("Reach");
-            Entity rt = nearestTarget(mc, reach.num("Range").value, 360.0,
-                    reach.bool("Players").value, reach.bool("Mobs").value, reach.bool("Invisible").value);
+            Entity rt = nearestTarget(mc, reach, reach.num("Range").value, 360.0);
             if (rt != null) {
                 double rd = Math.sqrt(mc.player.distanceToSqr(rt));
                 g.text(mc.font, "Reach " + rt.getDisplayName().getString() + " " + String.format(Locale.ROOT, "%.1fm", rd), 5, y, 0xFF9DD9FF, true);
@@ -1189,7 +1211,7 @@ public final class EioClient implements ClientModInitializer {
     private static final class Waypoint { final String name; final double x, y, z; Waypoint(String name, double x, double y, double z) { this.name = name; this.x = x; this.y = y; this.z = z; } }
 
     public static final class ClickGui extends Screen {
-        private static final String[] CATEGORIES = {"Combat", "Movement", "Player", "Render", "World", "Testing", "Misc"};
+        private static final String[] CATEGORIES = {"Active", "Combat", "Movement", "Player", "Render", "World", "Testing", "Misc"};
         private static final int MOB_PAGE_SIZE = 8;
         private String selectedCategory = "Combat";
         private Mod selectedMod;
@@ -1210,8 +1232,12 @@ public final class EioClient implements ClientModInitializer {
         @Override public void removed() { guiOpen = false; save(); super.removed(); }
         @Override public void onClose() { guiOpen = false; save(); super.onClose(); }
 
+        private boolean categoryMatches(Mod m, String category) {
+            return "Active".equals(category) ? m.enabled : m.category.equals(category);
+        }
+
         private Mod firstInCategory(String category) {
-            for (Mod m : MODS) if (m.category.equals(category)) return m;
+            for (Mod m : MODS) if (categoryMatches(m, category)) return m;
             return null;
         }
 
@@ -1219,7 +1245,7 @@ public final class EioClient implements ClientModInitializer {
         private int panelH() { return Math.max(270, Math.min(390, height - 18)); }
         private int panelX() { return (width - panelW()) / 2; }
         private int panelY() { return (height - panelH()) / 2; }
-        private int categoryCount(String category) { int count = 0; for (Mod m : MODS) if (m.category.equals(category)) count++; return count; }
+        private int categoryCount(String category) { int count = 0; for (Mod m : MODS) if (categoryMatches(m, category)) count++; return count; }
 
         @Override
         public void extractRenderState(GuiGraphicsExtractor g, int mx, int my, float delta) {
@@ -1274,7 +1300,7 @@ public final class EioClient implements ClientModInitializer {
             int moduleMax = Math.max(0, categoryCount(selectedCategory) * 22 - Math.max(1, moduleBottom - moduleTop));
             modulesScroll = clampScroll(modulesScroll, moduleMax);
             int myCard = moduleTop - modulesScroll;
-            for (Mod m : MODS) if (m.category.equals(selectedCategory)) {
+            for (Mod m : MODS) if (categoryMatches(m, selectedCategory)) {
                 boolean visible = myCard + 20 > moduleTop && myCard < moduleBottom;
                 if (visible) {
                     boolean selected = m == selectedMod;
@@ -1370,7 +1396,7 @@ public final class EioClient implements ClientModInitializer {
             g.fill(x + 10, footerY, x + bw - 10, y + bh - 7, 0x2810171F);
             String footer = trim(help, Math.max(40, (bw - 40) / 6));
             g.text(font, footer, x + 15, footerY + 6, 0xFF7D8B96, false);
-            String hint = "LMB select/toggle  •  RMB reset";
+            String hint = "ACTIVE = enabled modules  •  LMB select/toggle  •  RMB reset";
             g.text(font, hint, x + bw - font.width(hint) - 15, footerY + 6, 0xFF566671, false);
 
             super.extractRenderState(g, mx, my, delta);
@@ -1471,11 +1497,17 @@ public final class EioClient implements ClientModInitializer {
             int moduleMax = Math.max(0, categoryCount(selectedCategory) * 22 - Math.max(1, moduleBottom - moduleTop));
             modulesScroll = clampScroll(modulesScroll, moduleMax);
             int myCard = moduleTop - modulesScroll;
-            for (Mod m : MODS) if (m.category.equals(selectedCategory)) {
+            for (Mod m : MODS) if (categoryMatches(m, selectedCategory)) {
                 if (myCard >= moduleTop && myCard + 20 <= moduleBottom && in(e.x(), e.y(), modsX + 5, myCard, modsW - 10, 20)) {
                     if (leftClick) {
-                        if (selectedMod == m) toggle(m);
-                        else { selectedMod = m; mobPage = 0; settingsScroll = 0; }
+                        if (selectedMod == m) {
+                            toggle(m);
+                            if ("Active".equals(selectedCategory) && !m.enabled) {
+                                selectedMod = firstInCategory("Active");
+                                mobPage = 0;
+                                settingsScroll = 0;
+                            }
+                        } else { selectedMod = m; mobPage = 0; settingsScroll = 0; }
                     } else {
                         resetModuleSettings(m);
                         save();
@@ -1489,7 +1521,16 @@ public final class EioClient implements ClientModInitializer {
             if (selectedMod != null) {
                 int sx = detailX + 9, sw = detailW - 18, sy = bodyY + 8;
                 int toggleX = sx + sw - 42;
-                if (leftClick && in(e.x(), e.y(), toggleX, sy, 42, 19)) { toggle(selectedMod); return true; }
+                if (leftClick && in(e.x(), e.y(), toggleX, sy, 42, 19)) {
+                    Mod toggled = selectedMod;
+                    toggle(toggled);
+                    if ("Active".equals(selectedCategory) && !toggled.enabled) {
+                        selectedMod = firstInCategory("Active");
+                        mobPage = 0;
+                        settingsScroll = 0;
+                    }
+                    return true;
+                }
                 sy += 31;
                 if (leftClick && in(e.x(), e.y(), sx, sy, sw, 22)) {
                     Minecraft mc = Minecraft.getInstance();
@@ -1630,6 +1671,7 @@ public final class EioClient implements ClientModInitializer {
 
         private static int categoryColor(String category) {
             return switch (category) {
+                case "Active" -> 0xFF72D7A0;
                 case "Combat" -> 0xFFE87979;
                 case "Movement" -> 0xFF67C8F2;
                 case "Player" -> 0xFF72D7A0;
