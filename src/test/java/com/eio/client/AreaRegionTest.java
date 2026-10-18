@@ -7,7 +7,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 final class AreaRegionTest {
     @Test
-    void normalizesCornersAndDepth() {
+    void normalizesCornersAndCapsDepthAtFive() {
         AreaRegion r = AreaRegion.from(new BlockPos(12, 70, -3), new BlockPos(8, 68, 4), 6);
         assertNotNull(r);
         assertEquals(8, r.minX);
@@ -15,10 +15,21 @@ final class AreaRegionTest {
         assertEquals(-3, r.minZ);
         assertEquals(4, r.maxZ);
         assertEquals(70, r.topY);
-        assertEquals(65, r.bottomY);
+        assertEquals(66, r.bottomY);
         assertEquals(5, r.width());
         assertEquals(8, r.length());
-        assertEquals(6, r.depth());
+        assertEquals(5, r.depth());
+    }
+
+    @Test
+    void hardCapsEvenVeryLargeRequestedDepthAtFiveBlocks() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 80, 0), new BlockPos(1, 78, 1), 64);
+        assertNotNull(r);
+        assertEquals(AreaRegion.MAX_DEPTH, r.depth());
+        assertEquals(80, r.topY);
+        assertEquals(76, r.bottomY);
+        assertTrue(r.contains(new BlockPos(0, 76, 0)));
+        assertFalse(r.contains(new BlockPos(0, 75, 0)));
     }
 
     @Test
