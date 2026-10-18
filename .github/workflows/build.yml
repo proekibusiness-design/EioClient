@@ -1,4 +1,4 @@
-name: Build EioClient 0.27
+name: Build EioClient 0.27.1 Area LOS fix
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,6 +20,9 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
+      - name: Apply Area Miner LOS fix
+        run: python3 .github/eio0271_los_patch.py
+
       - name: Static source and model QA
         shell: bash
         run: |
@@ -28,13 +31,15 @@ jobs:
           from pathlib import Path
           s=Path('eio26/EioClient.java').read_text()
           gp=Path('gradle.properties').read_text()
-          assert 'VERSION = "0.27.0"' in s
-          assert 'BUILD_ID = "EIO-027-FASTAREA1"' in s
-          assert 'mod_version=0.27.0+26.3' in gp
-          for token in ['Layer Height','areaLayerIndex','areaLayerCount','areaLayerTop','areaLayerBottom','inActiveAreaLayer','blockAimError','wrappedDegrees','AREA MINER: LAYER','categoriesScroll','mouseScrolled','isWithinBlockInteractionRange']:
+          assert 'VERSION = "0.27.1"' in s
+          assert 'BUILD_ID = "EIO-0271-LOS1"' in s
+          assert 'mod_version=0.27.1+26.3' in gp
+          assert '.num("Layer Height", 4.0, 1.0, 10.0, 1.0' in s
+          for token in ['areaVisibleAimPoint','clearAreaRay','faceAreaBlock','categoriesScroll','mouseScrolled','isWithinBlockInteractionRange','Area Miner']:
               assert token in s, token
-          assert '.num("Aim Timeout", 3.0, 2.0, 12.0, 1.0' in s
-          print('0.27 final static QA passed')
+          assert 'faceAreaBlock(mc, areaMineTarget)' in s
+          assert 'return areaVisibleAimPoint(mc, pos) != null;' in s
+          print('0.27.1 Area Miner LOS static QA passed')
           PY
 
       - name: Unit tests and Fabric build
@@ -48,18 +53,17 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.27.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.27.1+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
           grep -Fqx 'com/eio/client/EioClient.class' /tmp/jar.list
-          grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          for token in findAreaMineTarget blockAimError areaLayerCount areaLayerTop areaLayerBottom inActiveAreaLayer updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
+          for token in findAreaMineTarget areaVisibleAimPoint clearAreaRay faceAreaBlock areaLayerCount updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-027-FASTAREA1' 'Layer Height' 'AREA MINER: LAYER'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-0271-LOS1' 'Layer Height' 'Area Miner'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -75,10 +79,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.27 JAR
+      - name: Canonicalize passing Area Miner fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.27.1 Area Miner line-of-sight fix'
+            git push origin HEAD:compat/0.24-server-authority
+          fi
+
+      - name: Upload 0.27.1 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.27.0-final
+          name: EioClient-26.3-v0.27.1-area-los-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
