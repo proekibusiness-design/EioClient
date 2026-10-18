@@ -1,0 +1,1 @@
+Expected CI gates: source transform, static bounds checks, Java/Fabric build, unit tests, deep JAR inspection, and byte-for-byte reproducibility.
