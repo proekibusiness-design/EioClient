@@ -43,5 +43,6 @@
   "key.eioclient.chunk_miner": "Chunk Miner",
   "key.eioclient.tool_saver": "Tool Saver",
   "key.eioclient.mining_hud": "Mining HUD",
-  "key.eioclient.nuker": "Nuker"
+  "key.eioclient.nuker": "Nuker",
+  "key.eioclient.compatibility_guard": "Compatibility Guard"
 }

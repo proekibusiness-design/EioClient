@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.23.0";
-    public static final String BUILD_ID = "EIO-023-QA1";
+    public static final String VERSION = "0.24.0";
+    public static final String BUILD_ID = "EIO-024-COMPAT1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -78,15 +78,19 @@ public final class EioClient implements ClientModInitializer {
     private static boolean flyForced;
     private static boolean flyPrevMayfly;
     private static boolean flyPrevFlying;
+    private static float flyPrevSpeed = 0.05f;
     private static boolean lowHealthAlerted;
     private static int lowHealthCooldown;
     private static boolean creativeAssistWarned;
     private static boolean creativeAssistSpeedForced;
+    private static float creativeAssistPrevSpeed = 0.05f;
     private static String configSource = "defaults";
     private static final ArrayDeque<Long> ATTACK_TIMES = new ArrayDeque<>();
     private static boolean runtimeSafeMode;
     private static int runtimeFaults;
     private static String lastRuntimeFault = "none";
+    private static final CompatibilityState COMPAT = new CompatibilityState();
+    private static long suppressedOutOfRangeAttacks;
     private static final long sessionStartedNanos = System.nanoTime();
     private static final DateTimeFormatter CLOCK_FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
     private static final String[] FOLLOW_MOB_IDS = {
@@ -239,6 +243,12 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Target", true, "Show the current Chunk Miner target coordinates.")
                 .bool("Tool", true, "Show remaining durability for the selected tool.");
 
+        mod("Compatibility Guard", "Misc", "Keeps automated interactions inside vanilla reach and yields briefly when the server corrects player position.", -1)
+                .bool("Vanilla Ranges", true, "Require Minecraft's own entity/block interaction-range checks before automated actions.")
+                .bool("Pause On Correction", true, "Temporarily yield Eio movement/combat/mining after a server position correction or teleport.")
+                .num("Pause Ticks", 4.0, 1.0, 20.0, 1.0, "Ticks to yield automation after a server position correction.")
+                .bool("Diagnostics", true, "Write server-position telemetry to eio-diagnostics.log.");
+
         mod("Session Info", "Misc", "Shows Eio and Minecraft versions on the HUD.", -1)
                 .bool("Build ID", false, "Also show the exact Eio QA build identifier.");
         mod("Session Timer", "Misc", "Shows how long the current Eio client session has been running.", -1);
@@ -292,7 +302,9 @@ public final class EioClient implements ClientModInitializer {
                             String report = validateModel() + " | Eio " + VERSION + " [" + BUILD_ID + "] | enabled=" + enabledCount()
                                     + " bound=" + bound + " | GUI=690x390 scrollable-glass | config=" + configSource
                                     + " | backup=" + Files.exists(CONFIG_BACKUP) + " | safeMode=" + runtimeSafeMode
-                                    + " | faults=" + runtimeFaults + " | lastFault=" + lastRuntimeFault;
+                                    + " | faults=" + runtimeFaults + " | lastFault=" + lastRuntimeFault
+                                    + " | serverCorrections=" + COMPAT.correctionCount() + " correctionPause=" + COMPAT.pauseTicks()
+                                    + " | blockedOutOfRangeAttacks=" + suppressedOutOfRangeAttacks;
                             c.getSource().sendFeedback(Component.literal(report));
                             return 1;
                         }))
@@ -411,6 +423,18 @@ public final class EioClient implements ClientModInitializer {
         Minecraft.getInstance().setScreenAndShow(new ClickGui());
     }
 
+    public static void onServerPositionCorrection(int id) {
+        Minecraft mc = Minecraft.getInstance();
+        Mod guard = find("Compatibility Guard");
+        int pause = guard != null && guard.enabled && guard.bool("Pause On Correction").value
+                ? Math.max(1, (int) Math.round(guard.num("Pause Ticks").value)) : 0;
+        COMPAT.onServerCorrection(id, pause, System.currentTimeMillis());
+        if (guard != null && guard.enabled) releaseCorrectionSensitiveState(mc);
+        if (guard != null && guard.enabled && guard.bool("Diagnostics").value) {
+            appendDiagnostic("SERVER_POSITION id=" + id + " pause=" + pause + " localServer=" + mc.isLocalServer());
+        }
+    }
+
     private static void guardedTick(Minecraft mc) {
         try {
             if (runtimeSafeMode) {
@@ -509,7 +533,7 @@ public final class EioClient implements ClientModInitializer {
     private static void applyProperties(Properties p, String source) {
         configSource = source;
         for (Mod m : MODS) {
-            String enabledDefault = m.name.equals("Notifications") ? "true" : "false";
+            String enabledDefault = (m.name.equals("Notifications") || m.name.equals("Compatibility Guard")) ? "true" : "false";
             m.enabled = Boolean.parseBoolean(p.getProperty("enabled." + m.name, enabledDefault));
             for (Setting setting : m.settings) {
                 if (setting instanceof BoolSetting b) b.value = b.defaultValue;
@@ -625,6 +649,7 @@ public final class EioClient implements ClientModInitializer {
             flyForced = false;
             lowHealthAlerted = false;
             lowHealthCooldown = 0;
+            COMPAT.clearPause();
             return;
         }
 
@@ -649,10 +674,13 @@ public final class EioClient implements ClientModInitializer {
         Mod chunkMiner = find("Chunk Miner");
         Mod nuker = find("Nuker");
         Mod bright = find("Fullbright");
+        Mod compatibility = find("Compatibility Guard");
+        boolean correctionPause = compatibility != null && compatibility.enabled
+                && compatibility.bool("Pause On Correction").value && COMPAT.paused();
 
-        boolean shouldForceForward = walk.enabled;
-        if (follow.enabled) shouldForceForward |= runFollow(mc, follow);
-        if (tunnelMiner.enabled && tunnelMiner.bool("Auto Walk").value) shouldForceForward = true;
+        boolean shouldForceForward = !correctionPause && walk.enabled;
+        if (!correctionPause && follow.enabled) shouldForceForward |= runFollow(mc, follow);
+        if (!correctionPause && tunnelMiner.enabled && tunnelMiner.bool("Auto Walk").value) shouldForceForward = true;
         if (shouldForceForward) {
             mc.options.keyUp.setDown(true);
             forwardForced = true;
@@ -661,17 +689,17 @@ public final class EioClient implements ClientModInitializer {
             forwardForced = false;
         }
 
-        if (sprint.enabled && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
+        if (!correctionPause && sprint.enabled && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
             boolean hungerOk = !sprint.bool("Hunger Check").value || mc.player.getFoodData().getFoodLevel() > 6;
             if (hungerOk) mc.player.setSprinting(true);
         }
-        if (tunnelMiner.enabled && tunnelMiner.bool("Sprint").value && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
+        if (!correctionPause && tunnelMiner.enabled && tunnelMiner.bool("Sprint").value && mc.options.keyUp.isDown() && !mc.player.horizontalCollision) {
             mc.player.setSprinting(true);
         }
-        if (speed.enabled) applyMovementSpeed(mc, speed);
+        if (!correctionPause && speed.enabled) applyMovementSpeed(mc, speed);
         boolean movingForSafeWalk = mc.options.keyUp.isDown() || mc.options.keyDown.isDown()
                 || mc.options.keyLeft.isDown() || mc.options.keyRight.isDown();
-        boolean shouldForceSneak = safe.enabled && movingForSafeWalk && mc.player.onGround();
+        boolean shouldForceSneak = !correctionPause && safe.enabled && movingForSafeWalk && mc.player.onGround();
         if (shouldForceSneak) {
             mc.options.keyShift.setDown(true);
             sneakForced = true;
@@ -680,11 +708,12 @@ public final class EioClient implements ClientModInitializer {
             sneakForced = false;
         }
 
-        if (fly.enabled) {
+        if (!correctionPause && fly.enabled) {
             var a = mc.player.getAbilities();
             if (!flyForced) {
                 flyPrevMayfly = a.mayfly;
                 flyPrevFlying = a.flying;
+                flyPrevSpeed = a.getFlyingSpeed();
                 flyForced = true;
             }
             a.mayfly = true;
@@ -695,9 +724,10 @@ public final class EioClient implements ClientModInitializer {
         }
         if (respawn.enabled && mc.player.isDeadOrDying()) mc.player.respawn();
 
-        if (creative.enabled && !fly.enabled && creative.bool("Auto Fly").value) {
+        if (!correctionPause && creative.enabled && !fly.enabled && creative.bool("Auto Fly").value) {
             var abilities = mc.player.getAbilities();
             if (abilities.mayfly) {
+                if (!creativeAssistSpeedForced) creativeAssistPrevSpeed = abilities.getFlyingSpeed();
                 abilities.flying = true;
                 abilities.setFlyingSpeed((float) creative.num("Flight Speed").value);
                 creativeAssistSpeedForced = true;
@@ -709,7 +739,7 @@ public final class EioClient implements ClientModInitializer {
         } else {
             creativeAssistWarned = false;
             if (creativeAssistSpeedForced && !fly.enabled) {
-                mc.player.getAbilities().setFlyingSpeed(0.05f);
+                mc.player.getAbilities().setFlyingSpeed(creativeAssistPrevSpeed);
                 creativeAssistSpeedForced = false;
             }
         }
@@ -732,7 +762,7 @@ public final class EioClient implements ClientModInitializer {
             lowHealthCooldown = 0;
         }
 
-        if (targetLock.enabled) {
+        if (!correctionPause && targetLock.enabled) {
             double lockRange = targetLock.num("Range").value;
             double lockFov = targetLock.num("FOV").value;
             if (!validConfiguredTarget(mc, targetLock, combatTarget, lockRange, lockFov)) {
@@ -741,7 +771,7 @@ public final class EioClient implements ClientModInitializer {
             if (combatTarget != null && targetLock.bool("Face Target").value) faceEntity(mc.player, combatTarget);
         } else combatTarget = null;
 
-        if (trigger.enabled) {
+        if (!correctionPause && trigger.enabled) {
             if (triggerCooldown > 0) triggerCooldown--;
             if (triggerCooldown <= 0 && mc.hitResult instanceof EntityHitResult hit) {
                 Entity t = hit.getEntity();
@@ -753,12 +783,12 @@ public final class EioClient implements ClientModInitializer {
             }
         } else triggerCooldown = 0;
 
-        if (combatSprint.enabled && !mc.player.horizontalCollision) {
+        if (!correctionPause && combatSprint.enabled && !mc.player.horizontalCollision) {
             Entity t = nearestTarget(mc, combatSprint, combatSprint.num("Range").value, combatSprint.num("FOV").value);
             if (t != null) mc.player.setSprinting(true);
         }
 
-        boolean miningAllowed = miningToolSafe(mc);
+        boolean miningAllowed = !correctionPause && miningToolSafe(mc);
         boolean shouldForceAttack = false;
         if (miningAllowed) {
             if (nuker.enabled) {
@@ -887,7 +917,7 @@ public final class EioClient implements ClientModInitializer {
         }
 
         boolean clickAllowed = !clicker.bool("Require Attack").value || mc.options.keyAttack.isDown();
-        if (clicker.enabled && clickAllowed) {
+        if (!correctionPause && clicker.enabled && clickAllowed) {
             double cps = Math.max(1.0, Math.min(20.0, clicker.num("CPS").value));
             clickAccumulator = Math.min(2.0, clickAccumulator + cps / 20.0);
             if (clickAccumulator >= 1.0) {
@@ -903,7 +933,7 @@ public final class EioClient implements ClientModInitializer {
             }
         } else clickAccumulator = 0.0;
 
-        if (aura.enabled) {
+        if (!correctionPause && aura.enabled) {
             if (auraCooldown-- <= 0) {
                 auraCooldown = Math.max(1, (int) Math.round(aura.num("Delay").value));
                 Entity target = nearestTarget(mc, aura, aura.num("Range").value, aura.num("FOV").value);
@@ -911,8 +941,8 @@ public final class EioClient implements ClientModInitializer {
             }
         } else auraCooldown = 0;
 
-        boolean shouldForceJump = (autoJump.enabled && mc.player.horizontalCollision && mc.player.onGround())
-                || (autoSwim.enabled && mc.player.isInWater());
+        boolean shouldForceJump = !correctionPause && ((autoJump.enabled && mc.player.horizontalCollision && mc.player.onGround())
+                || (autoSwim.enabled && mc.player.isInWater()));
         if (shouldForceJump) {
             mc.options.keyJump.setDown(true);
             jumpForced = true;
@@ -922,6 +952,7 @@ public final class EioClient implements ClientModInitializer {
         }
 
         if (bright.enabled) maintainFullbright(mc); else clearFullbright(mc);
+        COMPAT.tick();
     }
 
     private static void applyMovementSpeed(Minecraft mc, Mod speed) {
@@ -991,6 +1022,7 @@ public final class EioClient implements ClientModInitializer {
 
     private static boolean validChunkMineTarget(Minecraft mc, Mod chunk, BlockPos pos) {
         if (mc.player == null || mc.level == null || pos == null) return false;
+        if (!withinVanillaBlockRange(mc, pos)) return false;
         BlockPos origin = mc.player.blockPosition();
         if ((pos.getX() >> 4) != (origin.getX() >> 4) || (pos.getZ() >> 4) != (origin.getZ() >> 4)) return false;
         int vertical = (int) Math.round(chunk.num("Vertical").value);
@@ -1040,6 +1072,7 @@ public final class EioClient implements ClientModInitializer {
 
     private static boolean validNukerTarget(Minecraft mc, Mod nuker, BlockPos pos) {
         if (mc.player == null || mc.level == null || pos == null) return false;
+        if (!withinVanillaBlockRange(mc, pos)) return false;
         BlockPos origin = mc.player.blockPosition();
         int vertical = (int) Math.round(nuker.num("Vertical").value);
         if (Math.abs(pos.getY() - origin.getY()) > vertical) return false;
@@ -1120,8 +1153,25 @@ public final class EioClient implements ClientModInitializer {
         return best;
     }
 
+    private static boolean compatibilityRangeGuardEnabled() {
+        Mod guard = find("Compatibility Guard");
+        return guard != null && guard.enabled && guard.bool("Vanilla Ranges").value;
+    }
+
+    private static boolean withinVanillaBlockRange(Minecraft mc, BlockPos pos) {
+        return !compatibilityRangeGuardEnabled() || (mc.player != null && mc.player.isWithinBlockInteractionRange(pos, 0.0));
+    }
+
+    private static boolean withinVanillaEntityRange(Minecraft mc, Entity target) {
+        return !compatibilityRangeGuardEnabled() || (mc.player != null && mc.player.isWithinEntityInteractionRange(target, 0.0));
+    }
+
     private static void attack(Minecraft mc, Entity target) {
         if (mc.player == null || mc.gameMode == null || target == null || !target.isAlive()) return;
+        if (!withinVanillaEntityRange(mc, target)) {
+            suppressedOutOfRangeAttacks++;
+            return;
+        }
         mc.gameMode.attack(mc.player, target);
         mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);
         long now = System.currentTimeMillis();
@@ -1267,10 +1317,36 @@ public final class EioClient implements ClientModInitializer {
             var a = mc.player.getAbilities();
             a.mayfly = flyPrevMayfly;
             a.flying = flyPrevFlying;
-            a.setFlyingSpeed(0.05f);
+            a.setFlyingSpeed(flyPrevSpeed);
             mc.player.onUpdateAbilities();
         }
         flyForced = false;
+    }
+
+    private static void releaseCorrectionSensitiveState(Minecraft mc) {
+        if (mc == null) return;
+        if (forwardForced) { mc.options.keyUp.setDown(false); forwardForced = false; }
+        if (jumpForced) { mc.options.keyJump.setDown(false); jumpForced = false; }
+        if (sneakForced) { mc.options.keyShift.setDown(false); sneakForced = false; }
+        if (attackForced) { mc.options.keyAttack.setDown(false); attackForced = false; }
+        if (flyForced) restoreFly(mc);
+        if (creativeAssistSpeedForced && mc.player != null) {
+            mc.player.getAbilities().setFlyingSpeed(creativeAssistPrevSpeed);
+            creativeAssistSpeedForced = false;
+        }
+        followTarget = null;
+        combatTarget = null;
+        chunkMineTarget = null;
+        chunkMineRearmTicks = 0;
+        chunkMineAimTicks = 0;
+        CHUNK_MINE_SKIPPED.clear();
+        nukerTarget = null;
+        nukerRearmTicks = 0;
+        nukerAimTicks = 0;
+        NUKER_SKIPPED.clear();
+        clickAccumulator = 0.0;
+        auraCooldown = 0;
+        triggerCooldown = 0;
     }
 
     private static void releaseRuntimeState(Minecraft mc) {
@@ -1299,7 +1375,7 @@ public final class EioClient implements ClientModInitializer {
         lowHealthAlerted = false;
         lowHealthCooldown = 0;
         creativeAssistWarned = false;
-        if (creativeAssistSpeedForced && mc.player != null && !find("Fly").enabled) mc.player.getAbilities().setFlyingSpeed(0.05f);
+        if (creativeAssistSpeedForced && mc.player != null && !find("Fly").enabled) mc.player.getAbilities().setFlyingSpeed(creativeAssistPrevSpeed);
         creativeAssistSpeedForced = false;
     }
 
