@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "eioclient",
+  "version": "${version}",
+  "name": "Eio Client",
+  "description": "Eio Client 26.3 advanced quality release with compact glass UI, recovery tools, diagnostics, stable inputs and expanded HUD/QoL modules",
+  "authors": ["Eio"],
+  "environment": "client",
+  "entrypoints": {
+    "client": ["com.eio.client.EioClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.5",
+    "fabric-api": "*",
+    "minecraft": "~26.3",
+    "java": ">=25"
+  }
+}
