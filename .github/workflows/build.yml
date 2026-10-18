@@ -30,31 +30,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=eio26/EioClient.java
-          grep -Fq 'VERSION = "0.20.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-020-QA1"' "$SRC"
-          grep -Fq 'mod_version=0.20.0+26.3' gradle.properties
-          grep -Fq 'private static boolean validModuleTarget' "$SRC"
-          grep -Fq 'nearestTarget(Minecraft mc, Mod selector' "$SRC"
-          grep -Fq 'private boolean categoryMatches' "$SRC"
-          grep -Fq '"Active", "Combat"' "$SRC"
-          grep -Fq 'ACTIVE = enabled modules' "$SRC"
-          grep -Fq 'mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY)' "$SRC"
-          test "$(grep -c 'mobList("Target Selection"' "$SRC")" -eq 3
-          test "$(grep -c 'mobList("Mob Selection"' "$SRC")" -eq 1
-          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 35
-          if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
           import re
           s=Path('eio26/EioClient.java').read_text()
-          assert len(re.findall(r'^[ \t]*mod\("',s,re.M)) == 35
-          assert s.count('mobList("Target Selection"') == 3
-          assert s.count('mobList("Mob Selection"') == 1
-          assert s.count('private static boolean validModuleTarget') == 1
-          assert s.count('private boolean categoryMatches') == 1
-          assert s.count('public boolean mouseScrolled(') == 1
+          gp=Path('gradle.properties').read_text()
+          mods=re.findall(r'^[ \t]*mod\("',s,re.M)
+          print('modules=',len(mods),'targetSelectors=',s.count('mobList("Target Selection"'),'followSelectors=',s.count('mobList("Mob Selection"')))
+          assert 'VERSION = "0.20.0"' in s
+          assert 'BUILD_ID = "EIO-020-QA1"' in s
+          assert 'mod_version=0.20.0+26.3' in gp
+          assert len(mods)==35
+          assert s.count('mobList("Target Selection"')==3
+          assert s.count('mobList("Mob Selection"')==1
+          assert s.count('private static boolean validModuleTarget')==1
+          assert s.count('nearestTarget(Minecraft mc, Mod selector')==1
+          assert s.count('private boolean categoryMatches')==1
+          assert '"Active", "Combat"' in s
+          assert 'ACTIVE = enabled modules' in s
+          assert 'public boolean mouseScrolled(' in s
+          assert 'categoryMatches(m, selectedCategory)' in s
           assert 'return "Active".equals(category) ? m.enabled : m.category.equals(category);' in s
+          assert 'TODO' not in s and 'FIXME' not in s
           print('0.20 static QA passed')
           PY
 
