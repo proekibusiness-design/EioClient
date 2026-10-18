@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,16 +20,13 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply AREA3 fast-turn patch
-        run: python3 .github/eio026_area3_patch.py
-
       - name: Static Area Miner QA
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          import json,re
+          import re
           s=Path('eio26/EioClient.java').read_text()
           region=Path('eio26/com/eio/client/AreaRegion.java').read_text()
           tests=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
@@ -38,12 +35,12 @@ jobs:
           assert 'BUILD_ID = "EIO-026-AREA3"' in s
           assert len(mods)==45
           assert ('Area Miner','Mining') in mods
-          for token in ['Turn Lead','Turn Timeout','region.isRowEnd(areaNavIndex)','Fast handoff','return true;']:
+          for token in ['Turn Lead','Turn Timeout','region.isRowEnd(areaNavIndex)','Fast handoff']:
               assert token in s, token
           assert 'boolean isRowEnd(int index)' in region
           assert 'identifiesSerpentineRowEndsForFastTurns' in tests
           assert 'categoriesScroll' in s and 'GUI=760x430 modern-nav-glass' in s
-          print('AREA3 static QA passed')
+          print('AREA3 final static QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -70,7 +67,7 @@ jobs:
           grep -Fq 'isRowEnd' /tmp/region.javap
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
           for token in 'EIO-026-AREA3' 'Turn Lead' 'Turn Timeout'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "AREA3 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final AREA3 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -86,22 +83,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize AREA3 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.26 AREA3 fast-turn Area Miner'
-            git push origin HEAD:feature/0.25-area-miner-ui
-          fi
-
-      - name: Upload AREA3 candidate
+      - name: Upload final AREA3 JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.0-AREA3-candidate
+          name: EioClient-26.3-v0.26.0-AREA3-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
