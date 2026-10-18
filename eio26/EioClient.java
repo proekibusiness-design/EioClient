@@ -16,7 +16,7 @@ import net.minecraft.resources.Identifier;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-  public static final String VERSION="0.6.0";
+  public static final String VERSION="0.6.1";
   private static final List<Mod> MODS=new ArrayList<>();
   private static KeyMapping guiKey;
   private static boolean guiWasDown;
@@ -49,20 +49,17 @@ public final class EioClient implements ClientModInitializer {
     ClientTickEvents.END_CLIENT_TICK.register(EioClient::tick);
     HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient","hud"),EioClient::hud);
     ClientCommandRegistrationCallback.EVENT.register((d,a)->d.register(ClientCommands.literal("eio")
-      .executes(c->{toggleGui();return 1;})
-      .then(ClientCommands.literal("gui").executes(c->{toggleGui();return 1;}))
+      .executes(c->{openGui();return 1;})
+      .then(ClientCommands.literal("gui").executes(c->{openGui();return 1;}))
       .then(ClientCommands.literal("list").executes(c->{c.getSource().sendFeedback(Component.literal(summary()));return 1;}))
       .then(ClientCommands.literal("toggle").then(ClientCommands.argument("module",StringArgumentType.greedyString()).executes(c->{Mod m=find(StringArgumentType.getString(c,"module"));if(m==null){c.getSource().sendFeedback(Component.literal("Unknown module"));return 0;}toggle(m);return 1;})))));
   }
 
-  private static void toggleGui(){
-    Minecraft mc=Minecraft.getInstance();
-    if(mc.screen instanceof ClickGui) mc.setScreenAndShow(null); else mc.setScreenAndShow(new ClickGui());
-  }
+  private static void openGui(){ Minecraft.getInstance().setScreenAndShow(new ClickGui()); }
 
   private static void tick(Minecraft mc){
     boolean down=guiKey!=null&&guiKey.isDown();
-    if(down&&!guiWasDown) toggleGui();
+    if(down&&!guiWasDown) openGui();
     guiWasDown=down;
     if(mc.player==null)return;
     Mod w=find("AutoWalk"),s=find("Sprint");
