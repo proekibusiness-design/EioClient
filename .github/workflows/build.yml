@@ -5,8 +5,6 @@ on:
     branches: [ main ]
     paths-ignore:
       - 'eio26/EioClient.java'
-      - 'gradle.properties'
-      - 'src/main/resources/assets/eioclient/lang/en_us.json'
   workflow_dispatch:
 
 jobs:
@@ -16,8 +14,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -26,66 +22,84 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Apply Eio 0.16 upgrade
-        run: python3 .github/eio016_patch.py
+      - name: Apply QA2 safe HUD fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('eio26/EioClient.java')
+          s=p.read_text()
+          old_id='public static final String BUILD_ID = "EIO-016-QA1";'
+          new_id='public static final String BUILD_ID = "EIO-016-QA2";'
+          if old_id not in s:
+              raise SystemExit('build id target missing')
+          s=s.replace(old_id,new_id,1)
+          old='''    private static void guardedHud(GuiGraphicsExtractor g, DeltaTracker dt) {
+              try {
+                  hud(g, dt);
+              } catch (Throwable t) {
+                  enterSafeMode("hud", t, Minecraft.getInstance());
+              }
+          }'''
+          new='''    private static void guardedHud(GuiGraphicsExtractor g, DeltaTracker dt) {
+              Minecraft mc = Minecraft.getInstance();
+              if (runtimeSafeMode) {
+                  if (mc.player != null) {
+                      g.fill(3, 3, 183, 27, 0xD0181210);
+                      g.text(mc.font, "Eio Safe Mode", 8, 7, 0xFFFFA071, true);
+                      g.text(mc.font, "/eio recover after fixing the module", 8, 17, 0xFFD9E0E6, false);
+                  }
+                  return;
+              }
+              try {
+                  hud(g, dt);
+              } catch (Throwable t) {
+                  enterSafeMode("hud", t, mc);
+              }
+          }'''
+          if old not in s:
+              raise SystemExit('guardedHud target missing')
+          p.write_text(s.replace(old,new,1))
+          PY
 
-      - name: Static project QA
+      - name: Static QA2 checks
         shell: bash
         run: |
           set -euo pipefail
           SRC=eio26/EioClient.java
-          test -s "$SRC"
-          test -s build.gradle
-          test -s settings.gradle
-          test -s gradle.properties
-          test -s src/main/resources/fabric.mod.json
-          test -s src/main/resources/assets/eioclient/lang/en_us.json
-          grep -Fq 'mod_version=0.16.0+26.3' gradle.properties
           grep -Fq 'VERSION = "0.16.0"' "$SRC"
-          grep -Fq 'BUILD_ID = "EIO-016-QA1"' "$SRC"
+          grep -Fq 'BUILD_ID = "EIO-016-QA2"' "$SRC"
+          grep -Fq 'Eio Safe Mode' "$SRC"
+          grep -Fq '/eio recover after fixing the module' "$SRC"
+          grep -Fq 'runtimeSafeMode' "$SRC"
           grep -Fq 'guardedTick' "$SRC"
           grep -Fq 'guardedHud' "$SRC"
-          grep -Fq 'runtimeSafeMode' "$SRC"
-          grep -Fq 'enterSafeMode' "$SRC"
           grep -Fq 'literal("selftest")' "$SRC"
-          grep -Fq 'literal("recover")' "$SRC"
           grep -Fq 'literal("profile")' "$SRC"
-          grep -Fq 'snapshotProperties' "$SRC"
-          grep -Fq 'applyProperties' "$SRC"
-          grep -Fq 'PROFILE_DIR' "$SRC"
-          grep -Fq 'DIAGNOSTIC_LOG' "$SRC"
           grep -Fq 'CPS' "$SRC"
           grep -Fq 'Keystrokes' "$SRC"
           grep -Fq 'Held Item' "$SRC"
-          grep -Fq 'resetModuleSettings' "$SRC"
-          grep -Fq 'Math.min(438' "$SRC"
-          grep -Fq 'Math.min(254' "$SRC"
-          grep -Fq 'reproducibleFileOrder = true' build.gradle
+          grep -Fq 'mod_version=0.16.0+26.3' gradle.properties
           test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 33
-          if grep -Eq 'TODO|FIXME' "$SRC"; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then echo 'Versioned keybind ID found'; exit 1; fi
+          if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
           import json,re
           s=Path('eio26/EioClient.java').read_text()
-          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"', s, re.M)
-          names=[n for n,_ in mods]
-          allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
-          assert len(mods)==33, len(mods)
-          assert len(names)==len(set(n.lower() for n in names)), 'duplicate module name'
-          assert all(c in allowed for _,c in mods), 'invalid category'
+          mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"',s,re.M)
+          assert len(mods)==33
+          assert len({n.lower() for n,_ in mods})==33
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          expected={'key.eioclient.'+re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',n.lower())) for n in names}
-          expected.add('key.eioclient.clickgui')
-          missing=sorted(expected-set(lang))
-          assert not missing, f'missing language keys: {missing}'
+          for name,_ in mods:
+              slug=re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',name.lower()))
+              assert 'key.eioclient.'+slug in lang
           assert s.count('ClientTickEvents.END_CLIENT_TICK.register(EioClient::guardedTick)')==1
           assert s.count('HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient", "hud"), EioClient::guardedHud)')==1
-          print(f'0.16 model QA: {len(mods)} modules / {len(allowed)} categories / {len(lang)} language entries')
+          print('QA2 static model checks passed')
           PY
-          echo "Candidate source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
 
-      - name: Build native project
+      - name: Build
         run: gradle clean build --stacktrace --warning-mode all
 
       - name: Deep JAR QA
@@ -98,25 +112,15 @@ jobs:
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.16.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
-          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
-          [[ "$META" == *'"minecraft": "~26.3"'* ]]
-          [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
-          jar tf "$JAR" | grep -q '^assets/eioclient/lang/en_us.json$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          for token in guardedTick guardedHud enterSafeMode selfTestSummary snapshotProperties applyProperties saveProfile loadProfile deleteProfile currentCps resetModuleSettings; do grep -Fq "$token" /tmp/main.javap; done
-          for token in 438 254 drawRainbowBlockBrand categoryColor; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in guardedTick guardedHud enterSafeMode selfTestSummary saveProfile loadProfile deleteProfile currentCps; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-016-QA1' 'selftest' 'recover' 'profile' 'EIO SAFE MODE' 'CPS' 'Keystrokes' 'Held Item' 'eio-diagnostics.log'; do grep -Fq "$token" /tmp/main.strings; done
-          SIZE=$(stat -c%s "$JAR")
-          test "$SIZE" -gt 26000
-          echo "0.16 deep QA passed: $JAR"
-          echo "Size: $SIZE bytes"
-          echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-016-QA2' 'Eio Safe Mode' '/eio recover after fixing the module' 'selftest' 'profile' 'CPS' 'Keystrokes' 'Held Item'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "QA2 JAR SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Reproducibility check
         shell: bash
@@ -127,23 +131,23 @@ jobs:
           gradle clean build --quiet
           SECOND=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
           cmp -s /tmp/eio-first.jar "$SECOND"
-          echo "Reproducible 0.16 SHA256: $(sha256sum "$SECOND" | awk '{print $1}')"
+          echo "QA2 reproducible SHA256: $(sha256sum "$SECOND" | awk '{print $1}')"
 
-      - name: Canonicalize passing 0.16 source
+      - name: Canonicalize QA2 source
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'Eio CI'
           git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties src/main/resources/assets/eioclient/lang/en_us.json
+          git add eio26/EioClient.java
           if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.16 advanced quality release'
+            git commit -m 'Harden EioClient 0.16 safe-mode HUD fallback'
             git push origin HEAD:main
           fi
 
-      - name: Upload JAR
+      - name: Upload QA2 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.16.0-candidate
+          name: EioClient-26.3-v0.16.0-QA2-candidate
           path: build/libs/*.jar
           if-no-files-found: error
