@@ -1,4 +1,4 @@
-name: Build EioClient 0.26.2 Layer5 candidate
+name: Build EioClient 0.26.2
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply five-block Area Miner scheduler
-        run: python3 .github/eio0262_layer5_patch.py
 
       - name: Static source and layer QA
         shell: bash
@@ -45,7 +42,9 @@ jobs:
           assert 'region.layerBottomY(areaLayerIndex)' in s
           assert 'region.hasLayer(areaLayerIndex + 1)' in s
           assert 'areaLayerIndex++' in s
-          assert 'for (int y = region.topY; y >= region.bottomY; y--)' not in s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean updateAreaNavigation')]
+          target=s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean updateAreaNavigation')]
+          assert 'for (int y = region.topY; y >= region.bottomY; y--)' not in target
+          assert 'for (int y = layerTop; y >= layerBottom; y--)' in target
           assert 'static final int LAYER_DEPTH = 5;' in region
           for token in ['layerCount()', 'layerTopY(int layerIndex)', 'layerBottomY(int layerIndex)', 'layerSummary(int layerIndex)']:
               assert token in region, token
@@ -83,7 +82,7 @@ jobs:
           for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
           for token in 'EIO-0262-LAYER5' 'five-block top-down slabs' 'AREA MINER COMPLETE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -99,22 +98,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.26.2 five-block Area Miner layers'
-            git push origin HEAD:main
-          fi
-
-      - name: Upload candidate JAR
+      - name: Upload final JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.2-layer5-candidate
+          name: EioClient-26.3-v0.26.2-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
