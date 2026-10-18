@@ -38,7 +38,7 @@ import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
     public static final String VERSION = "0.16.0";
-    public static final String BUILD_ID = "EIO-016-QA1";
+    public static final String BUILD_ID = "EIO-016-QA2";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -342,10 +342,19 @@ public final class EioClient implements ClientModInitializer {
     }
 
     private static void guardedHud(GuiGraphicsExtractor g, DeltaTracker dt) {
+        Minecraft mc = Minecraft.getInstance();
+        if (runtimeSafeMode) {
+            if (mc.player != null) {
+                g.fill(3, 3, 183, 27, 0xD0181210);
+                g.text(mc.font, "Eio Safe Mode", 8, 7, 0xFFFFA071, true);
+                g.text(mc.font, "/eio recover after fixing the module", 8, 17, 0xFFD9E0E6, false);
+            }
+            return;
+        }
         try {
             hud(g, dt);
         } catch (Throwable t) {
-            enterSafeMode("hud", t, Minecraft.getInstance());
+            enterSafeMode("hud", t, mc);
         }
     }
 
