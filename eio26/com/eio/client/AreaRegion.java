@@ -34,7 +34,9 @@ final class AreaRegion {
     static AreaRegion from(BlockPos a, BlockPos b, int depth) {
         if (a == null || b == null) return null;
         int safeDepth = Math.max(1, Math.min(64, depth));
-        int top = Math.max(a.getY(), b.getY());
+        // Corner controls store the player's standing/feet position. The actual surface block
+        // is one Y below that position, so stage 1 must begin there instead of in the air.
+        int top = Math.max(a.getY(), b.getY()) - 1;
         int xs = Integer.compare(b.getX(), a.getX());
         int zs = Integer.compare(b.getZ(), a.getZ());
         if (xs == 0) xs = 1;
