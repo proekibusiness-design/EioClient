@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.5.1+26.3
+          mod_version=0.5.2+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -71,7 +71,7 @@ jobs:
           import java.util.*;
 
           public final class EioClient implements ClientModInitializer {
-            public static final String VERSION="0.5.1"; private static final List<Mod> MODS=new ArrayList<>(); private static KeyMapping guiKey;
+            public static final String VERSION="0.5.2"; private static final List<Mod> MODS=new ArrayList<>(); private static KeyMapping guiKey;
             static { add("Sprint","Movement","Automatically sprint while moving forward.",true); add("AutoWalk","Movement","Keeps the forward key held for you.",true); add("SafeWalk","Movement","Movement utility profile.",false); add("Step Assist","Movement","Step movement utility profile.",false); add("Coordinates","Render","Shows your XYZ position on the HUD.",true); add("FPS","Render","Shows the current FPS on the HUD.",true); add("Active Modules","Render","Shows enabled modules on the HUD.",true); add("Fullbright","Render","Brightness utility toggle.",false); add("Clean HUD","Render","Minimal Eio HUD presentation.",true); add("Auto Respawn","Player","Player convenience module.",false); add("Inventory Info","Player","Inventory information utility.",false); add("Durability HUD","Player","Equipment durability information.",false); add("Waypoints","World","World navigation utility profile.",false); add("Chunk Info","World","World/chunk information utility.",false); add("Session Info","Misc","Displays session information.",true); add("Notifications","Misc","Module state indicator.",true); }
             private static void add(String n,String c,String d,boolean i){MODS.add(new Mod(n,c,d,i));}
             @Override public void onInitializeClient(){
@@ -80,7 +80,7 @@ jobs:
               ClientTickEvents.END_CLIENT_TICK.register(EioClient::tick); HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient","hud"),EioClient::hud);
               ClientCommandRegistrationCallback.EVENT.register((d,a)->d.register(ClientCommands.literal("eio").executes(c->{open();return 1;}).then(ClientCommands.literal("gui").executes(c->{open();return 1;})).then(ClientCommands.literal("list").executes(c->{c.getSource().sendFeedback(Component.literal(summary()));return 1;})).then(ClientCommands.literal("toggle").then(ClientCommands.argument("module",StringArgumentType.greedyString()).executes(c->{Mod m=find(StringArgumentType.getString(c,"module"));if(m==null){c.getSource().sendFeedback(Component.literal("Unknown module"));return 0;}toggle(m);return 1;})))));
             }
-            private static void open(){Minecraft.getInstance().setScreen(new ClickGui());}
+            private static void open(){Minecraft.getInstance().setScreenAndShow(new ClickGui());}
             private static void tick(Minecraft mc){if(guiKey!=null)while(guiKey.consumeClick())open();if(mc.player==null)return;Mod w=find("AutoWalk"),s=find("Sprint");if(w.enabled)mc.options.keyUp.setDown(true);if(s.enabled&&mc.options.keyUp.isDown()&&mc.player.getFoodData().getFoodLevel()>6&&!mc.player.horizontalCollision)mc.player.setSprinting(true);}
             private static void hud(GuiGraphicsExtractor g,DeltaTracker dt){Minecraft mc=Minecraft.getInstance();if(mc.player==null)return;int y=5;g.text(mc.font,"Eio Client 26.3",5,y,0xFF7CC8FF,true);y+=11;if(find("Coordinates").enabled){g.text(mc.font,String.format(Locale.ROOT,"XYZ %.1f  %.1f  %.1f",mc.player.getX(),mc.player.getY(),mc.player.getZ()),5,y,0xFFFFFFFF,true);y+=11;}if(find("FPS").enabled){g.text(mc.font,"FPS "+mc.getFps(),5,y,0xFFFFFFFF,true);y+=11;}if(find("Active Modules").enabled)for(Mod m:MODS)if(m.enabled&&!m.name.equals("Active Modules")&&!m.name.equals("Coordinates")&&!m.name.equals("FPS")){g.text(mc.font,m.name,5,y,0xFF9AD8FF,true);y+=10;}}
             private static Mod find(String n){for(Mod m:MODS)if(m.name.equalsIgnoreCase(n))return m;return null;} private static void toggle(Mod m){m.enabled=!m.enabled;if(m.name.equals("AutoWalk")&&!m.enabled)Minecraft.getInstance().options.keyUp.setDown(false);} private static String summary(){StringJoiner j=new StringJoiner(" | ");for(Mod m:MODS)j.add(m.name+":"+(m.enabled?"ON":"OFF"));return j.toString();}
