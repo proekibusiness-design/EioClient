@@ -61,6 +61,7 @@ jobs:
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
+          sed -i 's|mc.player.swing(InteractionHand.MAIN_HAND);|mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);|' src/main/java/com/eio/client/EioClient.java
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
