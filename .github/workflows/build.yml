@@ -3,13 +3,15 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
+    paths-ignore:
+      - 'eio26/EioClient.java'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -157,19 +159,16 @@ jobs:
           test -n "$JAR"
           test -s "$JAR"
           unzip -tqq "$JAR"
-
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.15.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
           [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
-
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
           jar tf "$JAR" | grep -q '^assets/eioclient/lang/en_us.json$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
-
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           grep -Fq '438' /tmp/gui.javap
@@ -181,23 +180,32 @@ jobs:
           grep -Fq 'restoreFly' /tmp/main.javap
           grep -Fq 'forwardForced' /tmp/main.javap
           grep -Fq 'clickAccumulator' /tmp/main.javap
-
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
           strings /tmp/EioClient.class > /tmp/main.strings
           strings /tmp/ClickGui.class > /tmp/gui.strings
-          for token in 'EIO-015-QA1' 'key.eioclient.clickgui' 'Auto Clicker' 'Kill Aura' 'Follow' 'Auto Swim' 'Low Health Alert' 'Rotation' 'Memory' 'Clock' 'Session Timer' 'panic' 'resetsettings' 'reloadconfig' 'doctor'; do
-            grep -Fq "$token" /tmp/main.strings
-          done
+          for token in 'EIO-015-QA1' 'key.eioclient.clickgui' 'Auto Clicker' 'Kill Aura' 'Follow' 'Auto Swim' 'Low Health Alert' 'Rotation' 'Memory' 'Clock' 'Session Timer' 'panic' 'resetsettings' 'reloadconfig' 'doctor'; do grep -Fq "$token" /tmp/main.strings; done
           grep -Fq 'MADE BY EIO' /tmp/gui.strings
           if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
-
           SIZE=$(stat -c%s "$JAR")
           test "$SIZE" -gt 22000
           SHA=$(sha256sum "$JAR" | awk '{print $1}')
           echo "Deep QA passed: $JAR"
           echo "Size: $SIZE bytes"
           echo "SHA256: $SHA"
+
+      - name: Canonicalize passing source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp extracted/eioclient/src/main/java/com/eio/client/EioClient.java eio26/EioClient.java
+          git config user.name "Eio CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add eio26/EioClient.java
+          if ! git diff --cached --quiet; then
+            git commit -m "Canonicalize passing EioClient 0.15 source"
+            git push origin HEAD:main
+          fi
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
