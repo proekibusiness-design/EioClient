@@ -23,6 +23,9 @@ jobs:
       - name: Apply Area Miner interaction fix
         run: python3 .github/eio0261_area_minefix.py
 
+      - name: Apply Minecraft 26.3 compile correction
+        run: python3 .github/eio0261_compilefix.py
+
       - name: Static QA
         shell: bash
         run: |
@@ -40,6 +43,7 @@ jobs:
           assert ('Area Miner','Mining') in mods
           for token in ['continueAreaDestroy','stopAreaDestroy','startDestroyBlock','continueDestroyBlock','stopDestroyBlock','Mine Timeout','areaDestroyStarted','areaMineWorkTicks']:
               assert token in s, token
+          assert 'mc.gameMode.continueDestroyBlock(areaDestroyTarget, face);' in s
           assert 'categoriesScroll' in s and 'public boolean mouseScrolled(' in s
           print('0.26.1 static QA passed; modules=', len(mods))
           PY
