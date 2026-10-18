@@ -52,16 +52,26 @@ jobs:
           assert 'useJUnitPlatform()' in build
           assert 'def modVersion = project.version' in build
           assert "expand version: project.version" not in build
+          assert 'configureTests' in build and 'enableClientGameTests = true' in build
           mixin=json.loads(Path('src/main/resources/eioclient.mixins.json').read_text())
           assert 'ClientPacketListenerMixin' in mixin['client']
           mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
           assert mod.get('mixins') == ['eioclient.mixins.json']
+          gt=json.loads(Path('src/gametest/resources/fabric.mod.json').read_text())
+          assert gt['entrypoints']['fabric-client-gametest'] == ['com.eio.client.gametest.EioClientGameTest']
           assert Path('src/test/java/com/eio/client/CompatibilityStateTest.java').exists()
+          assert Path('src/gametest/java/com/eio/client/gametest/EioClientGameTest.java').exists()
           print('0.24 static compatibility QA passed')
           PY
 
       - name: Unit tests and native Fabric build
         run: gradle clean test build --stacktrace --warning-mode all
+
+      - name: Real 26.3 client + integrated-server GameTest
+        shell: bash
+        run: |
+          set -euo pipefail
+          xvfb-run -a gradle runClientGameTest --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
@@ -102,17 +112,16 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing compatibility changes
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties build.gradle src/main/resources/fabric.mod.json src/main/resources/assets/eioclient/lang/en_us.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.24 server-authority compatibility fixes'
-            git push origin HEAD:compat/0.24-server-authority
-          fi
+      - name: Upload client GameTest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EioClient-26.3-client-gametest-diagnostics
+          path: |
+            build/run/clientGameTest/logs/**
+            build/run/clientGameTest/screenshots/**
+            build/run/clientGameTest/config/eio-diagnostics.log
+          if-no-files-found: ignore
 
       - name: Upload compatibility candidate
         uses: actions/upload-artifact@v4
