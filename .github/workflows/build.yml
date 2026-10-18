@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.8.0+26.3
+          mod_version=0.8.1+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -61,7 +61,16 @@ jobs:
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
+
+          # Minecraft 26.3 uses SDL-backed keyboard codes. Raw -1 is not a valid
+          # keyboard scancode; use the game's UNKNOWN key (value 0) for unbound mappings.
+          sed -i 's/public static final String VERSION = "0.8.0";/public static final String VERSION = "0.8.1";/' src/main/java/com/eio/client/EioClient.java
+          sed -i 's/InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory/InputConstants.Type.KEYBOARD, (m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey), keyCategory/' src/main/java/com/eio/client/EioClient.java
+          sed -i 's/if (m.bind != null) {/if (m.bind != null \&\& !m.bind.isUnbound()) {/' src/main/java/com/eio/client/EioClient.java
+
+          # 26.3 swing animation API requires the item's animation and broadcast flag.
           sed -i 's|mc.player.swing(InteractionHand.MAIN_HAND);|mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);|' src/main/java/com/eio/client/EioClient.java
+
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
@@ -92,7 +101,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.8.0
+          name: EioClient-26.3-v0.8.1
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
