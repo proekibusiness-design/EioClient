@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply AREA2 serpentine refinement
-        run: python3 .github/eio026_area2_patch.py
 
       - name: Static source and GUI QA
         shell: bash
@@ -50,6 +47,7 @@ jobs:
           assert s.count('else if (setting instanceof PointSetting point) point.reset();') >= 2
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.area_miner') == 'Area Miner'
+          assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
           print('AREA2 static QA passed; modules=', len(mods))
           PY
 
@@ -78,7 +76,7 @@ jobs:
           for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
           for token in 'EIO-026-AREA2' 'Serpentine tunnel miner' 'AREA_MINER complete' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -94,22 +92,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing AREA2 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.26 AREA2 serpentine miner'
-            git push origin HEAD:feature/0.25-area-miner-ui
-          fi
-
-      - name: Upload AREA2 candidate
+      - name: Upload final AREA2 JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.26.0-AREA2-candidate
+          name: EioClient-26.3-v0.26.0-AREA2-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
