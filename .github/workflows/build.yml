@@ -25,7 +25,7 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Extract and configure 26.3 project
+      - name: Extract and port project
         shell: bash
         run: |
           unzip -q eioclient-legit-0.3.0.zip -d extracted
@@ -35,9 +35,9 @@ jobs:
           org.gradle.parallel=true
           minecraft_version=26.3
           loader_version=0.19.5
-          fabric_version=0.163.0+26.3
-          loom_version=1.17.11
-          mod_version=0.3.0+26.3
+          fabric_api_version=0.163.0+26.3
+          loom_version=1.17
+          mod_version=0.4.0+26.3
           maven_group=com.eio
           archives_base_name=eioclient
           EOF
@@ -52,7 +52,7 @@ jobs:
           dependencies {
               minecraft "com.mojang:minecraft:${project.minecraft_version}"
               implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-              implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+              implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
           }
           processResources {
               inputs.property "version", project.version
@@ -69,12 +69,128 @@ jobs:
           import json
           p='src/main/resources/fabric.mod.json'
           d=json.load(open(p))
+          d['version']='${version}'
           d['depends']['fabricloader']='>=0.19.5'
           d['depends']['minecraft']='~26.3'
           d['depends']['java']='>=25'
           d['depends']['fabric-api']='*'
           open(p,'w').write(json.dumps(d, indent=2)+'\n')
           PY
+
+          rm -rf src/main/java/com/eio/client
+          mkdir -p src/main/java/com/eio/client
+          cat > src/main/java/com/eio/client/EioClient.java <<'EOF'
+          package com.eio.client;
+
+          import com.mojang.brigadier.arguments.StringArgumentType;
+          import net.fabricmc.api.ClientModInitializer;
+          import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+          import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
+          import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+          import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+          import net.minecraft.client.Minecraft;
+          import net.minecraft.client.gui.GuiGraphicsExtractor;
+          import net.minecraft.network.chat.Component;
+          import net.minecraft.resources.Identifier;
+
+          import java.util.LinkedHashMap;
+          import java.util.Locale;
+          import java.util.Map;
+
+          public final class EioClient implements ClientModInitializer {
+              public static final String NAME = "Eio Client";
+              private static final Map<String, Boolean> MODULES = new LinkedHashMap<>();
+
+              static {
+                  MODULES.put("Sprint", false);
+                  MODULES.put("AutoWalk", false);
+                  MODULES.put("HUD", true);
+              }
+
+              @Override
+              public void onInitializeClient() {
+                  ClientTickEvents.END_CLIENT_TICK.register(EioClient::tick);
+
+                  HudElementRegistry.addLast(
+                      Identifier.fromNamespaceAndPath("eioclient", "hud"),
+                      EioClient::renderHud
+                  );
+
+                  ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
+                      dispatcher.register(ClientCommands.literal("eio")
+                          .executes(ctx -> {
+                              ctx.getSource().sendFeedback(Component.literal("Eio Client 0.4.0 for Minecraft 26.3"));
+                              return 1;
+                          })
+                          .then(ClientCommands.literal("list").executes(ctx -> {
+                              ctx.getSource().sendFeedback(Component.literal("Modules: " + moduleSummary()));
+                              return 1;
+                          }))
+                          .then(ClientCommands.literal("toggle")
+                              .then(ClientCommands.argument("module", StringArgumentType.word())
+                                  .executes(ctx -> {
+                                      String requested = StringArgumentType.getString(ctx, "module");
+                                      String key = findModule(requested);
+                                      if (key == null) {
+                                          ctx.getSource().sendFeedback(Component.literal("Unknown module: " + requested));
+                                          return 0;
+                                      }
+                                      boolean enabled = !MODULES.get(key);
+                                      MODULES.put(key, enabled);
+                                      if (key.equals("AutoWalk") && !enabled) {
+                                          Minecraft.getInstance().options.keyUp.setDown(false);
+                                      }
+                                      ctx.getSource().sendFeedback(Component.literal(key + (enabled ? " enabled" : " disabled")));
+                                      return 1;
+                                  }))));
+                  });
+              }
+
+              private static void tick(Minecraft mc) {
+                  if (mc.player == null) return;
+
+                  if (MODULES.get("AutoWalk")) {
+                      mc.options.keyUp.setDown(true);
+                  }
+
+                  if (MODULES.get("Sprint")) {
+                      boolean hungry = mc.player.getFoodData().getFoodLevel() <= 6;
+                      if (mc.options.keyUp.isDown() && !hungry && !mc.player.horizontalCollision) {
+                          mc.player.setSprinting(true);
+                      }
+                  }
+              }
+
+              private static void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker deltaTracker) {
+                  Minecraft mc = Minecraft.getInstance();
+                  if (!MODULES.get("HUD") || mc.player == null || mc.gui.hud.isHidden()) return;
+
+                  int y = 4;
+                  graphics.text(mc.font, "Eio Client 26.3", 4, y, 0xFFFFFFFF, true);
+                  y += 11;
+                  String xyz = String.format(Locale.ROOT, "XYZ: %.1f %.1f %.1f", mc.player.getX(), mc.player.getY(), mc.player.getZ());
+                  graphics.text(mc.font, xyz, 4, y, 0xFFFFFFFF, true);
+                  y += 11;
+                  graphics.text(mc.font, moduleSummary(), 4, y, 0xFFFFFFFF, true);
+              }
+
+              private static String findModule(String input) {
+                  for (String name : MODULES.keySet()) {
+                      if (name.equalsIgnoreCase(input)) return name;
+                  }
+                  return null;
+              }
+
+              private static String moduleSummary() {
+                  StringBuilder out = new StringBuilder();
+                  for (Map.Entry<String, Boolean> e : MODULES.entrySet()) {
+                      if (!out.isEmpty()) out.append(" | ");
+                      out.append(e.getKey()).append(':').append(e.getValue() ? "ON" : "OFF");
+                  }
+                  return out.toString();
+              }
+          }
+          EOF
 
       - name: Build
         working-directory: extracted/eioclient
