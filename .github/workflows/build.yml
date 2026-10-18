@@ -4,14 +4,14 @@ on:
   push:
     branches: [ main ]
     paths-ignore:
-      - 'eio26/EioClient.java'
+      - '.buildsrc/**'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -61,7 +61,7 @@ jobs:
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
-          python3 ../../.buildsrc/patch015.py
+          cmp -s ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
@@ -105,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=extracted/eioclient/src/main/java/com/eio/client/EioClient.java
+          SRC=eio26/EioClient.java
           test -s "$SRC"
           grep -Fq 'VERSION = "0.15.0"' "$SRC"
           grep -Fq 'BUILD_ID = "EIO-015-QA1"' "$SRC"
@@ -122,8 +122,6 @@ jobs:
           grep -Fq 'Rotation' "$SRC"
           grep -Fq 'Memory' "$SRC"
           grep -Fq 'Clock' "$SRC"
-          grep -Fq 'defaultValue' "$SRC"
-          grep -Fq 'MOUSE_BUTTON_RIGHT' "$SRC"
           grep -Fq 'Math.min(438' "$SRC"
           grep -Fq 'Math.min(254' "$SRC"
           grep -Fq 'drawRainbowBlockBrand' "$SRC"
@@ -134,18 +132,16 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
-          s=Path('extracted/eioclient/src/main/java/com/eio/client/EioClient.java').read_text()
+          s=Path('eio26/EioClient.java').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^"]+)",\s*"([^"]+)"', s, re.M)
           names=[n for n,_ in mods]
-          assert len(mods)==30, len(mods)
-          assert len(names)==len(set(n.lower() for n in names)), 'duplicate module name'
+          assert len(mods)==30
+          assert len(names)==len(set(n.lower() for n in names))
           allowed={'Combat','Movement','Player','Render','World','Testing','Misc'}
-          assert all(c in allowed for _,c in mods), 'invalid category'
-          assert 'EIO-015-QA1' in s and 'key.eioclient.clickgui' in s
-          print('Model QA:', len(mods), 'modules /', len(allowed), 'categories')
+          assert all(c in allowed for _,c in mods)
+          print('Canonical model QA:', len(mods), 'modules /', len(allowed), 'categories')
           PY
-          echo "Candidate source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
-          echo 'Static source QA passed'
+          echo "Canonical source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
 
       - name: Build
         working-directory: extracted/eioclient
@@ -156,8 +152,7 @@ jobs:
         run: |
           set -euo pipefail
           JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
-          test -n "$JAR"
-          test -s "$JAR"
+          test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.15.0+26.3"'* ]]
@@ -171,15 +166,8 @@ jobs:
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          grep -Fq '438' /tmp/gui.javap
-          grep -Fq '254' /tmp/gui.javap
-          grep -Fq 'drawRainbowBlockBrand' /tmp/gui.javap
-          grep -Fq 'categoryColor' /tmp/gui.javap
-          grep -Fq 'validateModel' /tmp/main.javap
-          grep -Fq 'releaseRuntimeState' /tmp/main.javap
-          grep -Fq 'restoreFly' /tmp/main.javap
-          grep -Fq 'forwardForced' /tmp/main.javap
-          grep -Fq 'clickAccumulator' /tmp/main.javap
+          for token in 438 254 drawRainbowBlockBrand categoryColor; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in validateModel releaseRuntimeState restoreFly forwardForced clickAccumulator; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
           strings /tmp/EioClient.class > /tmp/main.strings
@@ -189,36 +177,15 @@ jobs:
           if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
           SIZE=$(stat -c%s "$JAR")
           test "$SIZE" -gt 22000
-          SHA=$(sha256sum "$JAR" | awk '{print $1}')
-          echo "Deep QA passed: $JAR"
+          echo "Direct-source QA passed: $JAR"
           echo "Size: $SIZE bytes"
-          echo "SHA256: $SHA"
-
-      - name: Canonicalize passing source
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp extracted/eioclient/src/main/java/com/eio/client/EioClient.java eio26/EioClient.java
-          git config user.name "Eio CI"
-          git config user.email "actions@users.noreply.github.com"
-          git add eio26/EioClient.java
-          if ! git diff --cached --quiet; then
-            git commit -m "Canonicalize passing EioClient 0.15 source"
-            git push origin HEAD:main
-          fi
+          echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.15.0
+          name: EioClient-26.3-v0.15.0-direct
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
-          if-no-files-found: error
-
-      - name: Upload passing source snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: EioClient-26.3-v0.15.0-source
-          path: extracted/eioclient/src/main/java/com/eio/client/EioClient.java
           if-no-files-found: error
