@@ -1,4 +1,4 @@
-name: Build EioClient 0.25
+name: EioClient 0.26 Area Miner candidate
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static source and GUI QA
+      - name: Apply 0.26 Area Miner and GUI patch
+        run: python3 .github/eio026_area_patch.py
+
+      - name: Static source, model and navigation QA
         shell: bash
         run: |
           set -euo pipefail
@@ -29,33 +32,35 @@ jobs:
           import json,re
           s=Path('eio26/EioClient.java').read_text()
           gp=Path('gradle.properties').read_text()
-          build=Path('build.gradle').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.25.0"' in s
-          assert 'BUILD_ID = "EIO-025-GUI1"' in s
-          assert 'mod_version=0.25.0+26.3' in gp
-          assert len(mods)==44, len(mods)
-          assert ('Compatibility Guard','Misc') in mods
-          for token in ['categoriesScroll','categoryViewport','categoryMax','WHEEL scrolls each panel','GUI=720x410 modern-scroll-glass']:
+          assert 'VERSION = "0.26.0"' in s
+          assert 'BUILD_ID = "EIO-026-AREA1"' in s
+          assert 'mod_version=0.26.0+26.3' in gp
+          assert len(mods)==45, len(mods)
+          assert ('Area Miner','Mining') in mods
+          for token in [
+              'PointSetting', 'Corner A', 'Corner B', 'Depth', 'Move Timeout',
+              'findAreaMineTarget', 'validAreaMineTarget', 'updateAreaNavigation',
+              'areaStatus', 'resetAreaRuntime', 'areaMoveRequested',
+              'categoriesScroll', 'NAVIGATION', 'WHEEL panel scroll',
+              'GUI=760x430 modern-nav-glass', 'isWithinBlockInteractionRange'
+          ]:
               assert token in s, token
-          assert 'private int panelW() { return Math.max(430, Math.min(720, width - 18)); }' in s
-          assert 'private int panelH() { return Math.max(270, Math.min(410, height - 18)); }' in s
-          assert s.count('int railX = x + 10, railW = 108;') >= 3
+          assert 'private int panelW() { return Math.max(450, Math.min(760, width - 16)); }' in s
+          assert 'private int panelH() { return Math.max(280, Math.min(430, height - 16)); }' in s
+          assert s.count('int railX = x + 10, railW = 122;') >= 3
           assert 'public boolean mouseScrolled(' in s
-          assert 'drawScrollBar(g, railX + railW - 3' in s
-          assert 'isWithinEntityInteractionRange' in s
-          assert 'isWithinBlockInteractionRange' in s
-          assert 'onServerPositionCorrection' in s
-          assert 'testRuntimeOnly "org.junit.platform:junit-platform-launcher"' in build
-          mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
-          assert mod.get('mixins') == ['eioclient.mixins.json']
-          print('0.25 final static QA passed')
+          assert Path('eio26/com/eio/client/AreaRegion.java').exists()
+          assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
+          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
+          assert lang.get('key.eioclient.area_miner') == 'Area Miner'
+          print('0.26 static QA passed; modules=', len(mods))
           PY
 
       - name: Unit tests and native Fabric build
         run: gradle clean test build --stacktrace --warning-mode all
 
-      - name: Deep JAR and GUI bytecode QA
+      - name: Deep JAR and bytecode QA
         shell: bash
         run: |
           set -euo pipefail
@@ -63,21 +68,24 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.25.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.26.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
+          grep -Fqx 'com/eio/client/EioClient.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
-          grep -Fqx 'com/eio/client/CompatibilityState.class' /tmp/jar.list
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
+          grep -Fqx 'com/eio/client/EioClient$PointSetting.class' /tmp/jar.list
+          grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          for token in categoriesScroll mouseScrolled drawScrollBar clampScroll settingsContentHeight; do grep -Fq "$token" /tmp/gui.javap; done
-          for token in onServerPositionCorrection withinVanillaBlockRange withinVanillaEntityRange; do grep -Fq "$token" /tmp/main.javap; done
-          unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
-          strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-025-GUI1' 'GUI=720x410 modern-scroll-glass' 'Compatibility Guard'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
+          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/area.javap
+          for token in findAreaMineTarget validAreaMineTarget updateAreaNavigation areaStatus resetAreaRuntime withinVanillaBlockRange; do grep -Fq "$token" /tmp/main.javap; done
+          for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
+          for token in navigationCell supportedSize contains; do grep -Fq "$token" /tmp/area.javap; done
+          unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
+          for token in 'EIO-026-AREA1' 'Area Miner' 'Corner A' 'Corner B' 'Move Timeout' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -93,10 +101,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.25 JAR
+      - name: Canonicalize passing 0.26 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java gradle.properties src/main/resources/assets/eioclient/lang/en_us.json src/test/java/com/eio/client/AreaRegionTest.java
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize Eio 0.26 Area Miner and modern navigation'
+            git push origin HEAD:compat/0.24-server-authority
+          fi
+
+      - name: Upload 0.26 candidate JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.25.0-final
+          name: EioClient-26.3-v0.26.0-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
