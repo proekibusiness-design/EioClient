@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.22.0";
-    public static final String BUILD_ID = "EIO-022-QA1";
+    public static final String VERSION = "0.23.0";
+    public static final String BUILD_ID = "EIO-023-QA1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -62,6 +62,10 @@ public final class EioClient implements ClientModInitializer {
     private static int chunkMineChunkX = Integer.MIN_VALUE;
     private static int chunkMineChunkZ = Integer.MIN_VALUE;
     private static final Set<BlockPos> CHUNK_MINE_SKIPPED = new HashSet<>();
+    private static BlockPos nukerTarget;
+    private static int nukerRearmTicks;
+    private static int nukerAimTicks;
+    private static final Set<BlockPos> NUKER_SKIPPED = new HashSet<>();
     private static boolean attackForced;
     private static boolean toolSaverWarned;
     private static MobEffectInstance fullbrightInjected;
@@ -191,7 +195,7 @@ public final class EioClient implements ClientModInitializer {
         mod("Target HUD", "Render", "Shows the current crosshair or Follow target and its distance.", -1);
         mod("Health", "Render", "Shows current and maximum health on the HUD.", -1);
         mod("Speed", "Movement", "Adjusts horizontal movement speed while you are moving, with an optional live HUD readout.", -1)
-                .num("Multiplier", 1.8, 1.0, 5.0, 0.1, "Horizontal movement multiplier. High values may be rejected or corrected by multiplayer servers.")
+                .num("Multiplier", 1.8, 1.0, 10.0, 0.1, "Horizontal movement multiplier. Extreme values may be rejected or corrected by multiplayer servers.")
                 .bool("Ground Only", true, "Only apply the speed multiplier while standing on the ground.")
                 .bool("Show HUD", true, "Show current horizontal blocks-per-second while Speed is enabled.");
         mod("Facing", "Render", "Shows the cardinal direction you are facing.", -1);
@@ -220,6 +224,14 @@ public final class EioClient implements ClientModInitializer {
                 .bool("Exposed Only", true, "Only choose blocks with at least one air-adjacent face.")
                 .bool("Avoid Below", true, "Avoid selecting blocks below your feet.")
                 .bool("Face Block", true, "Turn your view toward the selected chunk-mining block.");
+        mod("Nuker", "Mining", "Aggressively clears nearby breakable blocks with continuous retargeting while still using normal mining interaction.", -1)
+                .num("Radius", 5.0, 1.0, 6.0, 0.5, "Area-clear radius around you. Normal server interaction distance still applies.")
+                .num("Vertical", 3.0, 1.0, 5.0, 1.0, "Vertical area cleared above and below you.")
+                .num("Retarget Delay", 1.0, 1.0, 3.0, 1.0, "Ticks to release attack before starting the next Nuker target.")
+                .num("Aim Timeout", 8.0, 4.0, 30.0, 1.0, "Ticks allowed to acquire a block before skipping it temporarily.")
+                .bool("Exposed Only", true, "Only target blocks with at least one exposed face.")
+                .bool("Avoid Below", true, "Avoid mining blocks below your feet.")
+                .bool("Face Block", true, "Turn your view toward the active Nuker target.");
         mod("Tool Saver", "Mining", "Stops Eio mining automation before the held damageable tool reaches the configured remaining durability.", -1)
                 .num("Remaining", 12.0, 1.0, 100.0, 1.0, "Minimum durability to keep in reserve.")
                 .bool("Notify", true, "Show a warning when mining pauses to protect the tool.");
@@ -602,6 +614,10 @@ public final class EioClient implements ClientModInitializer {
             chunkMineChunkX = Integer.MIN_VALUE;
             chunkMineChunkZ = Integer.MIN_VALUE;
             CHUNK_MINE_SKIPPED.clear();
+            nukerTarget = null;
+            nukerRearmTicks = 0;
+            nukerAimTicks = 0;
+            NUKER_SKIPPED.clear();
             clickAccumulator = 0.0;
             auraCooldown = 0;
             triggerCooldown = 0;
@@ -631,6 +647,7 @@ public final class EioClient implements ClientModInitializer {
         Mod autoMine = find("Auto Mine");
         Mod tunnelMiner = find("Tunnel Miner");
         Mod chunkMiner = find("Chunk Miner");
+        Mod nuker = find("Nuker");
         Mod bright = find("Fullbright");
 
         boolean shouldForceForward = walk.enabled;
@@ -744,7 +761,48 @@ public final class EioClient implements ClientModInitializer {
         boolean miningAllowed = miningToolSafe(mc);
         boolean shouldForceAttack = false;
         if (miningAllowed) {
-            if (chunkMiner.enabled) {
+            if (nuker.enabled) {
+                if (nukerTarget != null && mc.level.getBlockState(nukerTarget).isAir()) {
+                    nukerTarget = null;
+                    nukerAimTicks = 0;
+                    nukerRearmTicks = Math.max(1, (int) Math.round(nuker.num("Retarget Delay").value));
+                } else if (nukerTarget != null && !validNukerTarget(mc, nuker, nukerTarget)) {
+                    NUKER_SKIPPED.add(nukerTarget.immutable());
+                    nukerTarget = null;
+                    nukerAimTicks = 0;
+                    nukerRearmTicks = Math.max(1, (int) Math.round(nuker.num("Retarget Delay").value));
+                }
+
+                if (nukerRearmTicks > 0) {
+                    nukerRearmTicks--;
+                } else {
+                    if (nukerTarget == null) {
+                        nukerTarget = findNukerTarget(mc, nuker);
+                        nukerAimTicks = 0;
+                        if (nukerTarget == null && !NUKER_SKIPPED.isEmpty()) {
+                            NUKER_SKIPPED.clear();
+                            nukerTarget = findNukerTarget(mc, nuker);
+                        }
+                    }
+                    if (nukerTarget != null) {
+                        if (nuker.bool("Face Block").value) faceBlock(mc.player, nukerTarget);
+                        boolean aimed = mc.hitResult instanceof BlockHitResult hit && hit.getBlockPos().equals(nukerTarget);
+                        if (aimed) {
+                            shouldForceAttack = true;
+                            nukerAimTicks = 0;
+                        } else if (++nukerAimTicks >= Math.max(4, (int) Math.round(nuker.num("Aim Timeout").value))) {
+                            NUKER_SKIPPED.add(nukerTarget.immutable());
+                            nukerTarget = null;
+                            nukerAimTicks = 0;
+                            nukerRearmTicks = 1;
+                        }
+                    }
+                }
+
+                chunkMineTarget = null;
+                chunkMineRearmTicks = 0;
+                chunkMineAimTicks = 0;
+            } else if (chunkMiner.enabled) {
                 int cx = mc.player.blockPosition().getX() >> 4;
                 int cz = mc.player.blockPosition().getZ() >> 4;
                 if (cx != chunkMineChunkX || cz != chunkMineChunkZ) {
@@ -794,6 +852,10 @@ public final class EioClient implements ClientModInitializer {
                     }
                 }
             } else {
+                nukerTarget = null;
+                nukerRearmTicks = 0;
+                nukerAimTicks = 0;
+                NUKER_SKIPPED.clear();
                 chunkMineTarget = null;
                 chunkMineRearmTicks = 0;
                 chunkMineAimTicks = 0;
@@ -811,6 +873,9 @@ public final class EioClient implements ClientModInitializer {
             chunkMineTarget = null;
             chunkMineRearmTicks = 0;
             chunkMineAimTicks = 0;
+            nukerTarget = null;
+            nukerRearmTicks = 0;
+            nukerAimTicks = 0;
         }
 
         if (shouldForceAttack) {
@@ -962,6 +1027,47 @@ public final class EioClient implements ClientModInitializer {
                     BlockPos pos = origin.offset(dx, dy, dz);
                     if (CHUNK_MINE_SKIPPED.contains(pos)) continue;
                     if (!validChunkMineTarget(mc, chunk, pos)) continue;
+                    double px = pos.getX() + 0.5 - mc.player.getX();
+                    double py = pos.getY() + 0.5 - mc.player.getY();
+                    double pz = pos.getZ() + 0.5 - mc.player.getZ();
+                    double d = px * px + py * py + pz * pz;
+                    if (d < bestSq) { bestSq = d; best = pos.immutable(); }
+                }
+            }
+        }
+        return best;
+    }
+
+    private static boolean validNukerTarget(Minecraft mc, Mod nuker, BlockPos pos) {
+        if (mc.player == null || mc.level == null || pos == null) return false;
+        BlockPos origin = mc.player.blockPosition();
+        int vertical = (int) Math.round(nuker.num("Vertical").value);
+        if (Math.abs(pos.getY() - origin.getY()) > vertical) return false;
+        if (nuker.bool("Avoid Below").value && pos.getY() < (int) Math.floor(mc.player.getY())) return false;
+        double dx = pos.getX() + 0.5 - mc.player.getX();
+        double dy = pos.getY() + 0.5 - mc.player.getY();
+        double dz = pos.getZ() + 0.5 - mc.player.getZ();
+        double r = nuker.num("Radius").value;
+        if (dx * dx + dy * dy + dz * dz > r * r) return false;
+        var state = mc.level.getBlockState(pos);
+        if (state.isAir() || state.getDestroySpeed(mc.level, pos) < 0.0f) return false;
+        if (nuker.bool("Exposed Only").value && !isExposedBlock(mc, pos)) return false;
+        return true;
+    }
+
+    private static BlockPos findNukerTarget(Minecraft mc, Mod nuker) {
+        if (mc.player == null || mc.level == null) return null;
+        BlockPos origin = mc.player.blockPosition();
+        int radius = (int) Math.ceil(nuker.num("Radius").value);
+        int vertical = (int) Math.round(nuker.num("Vertical").value);
+        BlockPos best = null;
+        double bestSq = Double.MAX_VALUE;
+        for (int dy = -vertical; dy <= vertical; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    BlockPos pos = origin.offset(dx, dy, dz);
+                    if (NUKER_SKIPPED.contains(pos)) continue;
+                    if (!validNukerTarget(mc, nuker, pos)) continue;
                     double px = pos.getX() + 0.5 - mc.player.getX();
                     double py = pos.getY() + 0.5 - mc.player.getY();
                     double pz = pos.getZ() + 0.5 - mc.player.getZ();
@@ -1130,8 +1236,8 @@ public final class EioClient implements ClientModInitializer {
                 lowHealthCooldown = 0;
             }
             if (m.name.equals("Fullbright")) clearFullbright(mc);
-            if ((m.name.equals("Auto Mine") || m.name.equals("Tunnel Miner") || m.name.equals("Chunk Miner"))
-                    && !find("Auto Mine").enabled && !find("Tunnel Miner").enabled && !find("Chunk Miner").enabled && attackForced) {
+            if ((m.name.equals("Auto Mine") || m.name.equals("Tunnel Miner") || m.name.equals("Chunk Miner") || m.name.equals("Nuker"))
+                    && !find("Auto Mine").enabled && !find("Tunnel Miner").enabled && !find("Chunk Miner").enabled && !find("Nuker").enabled && attackForced) {
                 mc.options.keyAttack.setDown(false);
                 attackForced = false;
                 chunkMineTarget = null;
@@ -1143,6 +1249,12 @@ public final class EioClient implements ClientModInitializer {
                 chunkMineChunkX = Integer.MIN_VALUE;
                 chunkMineChunkZ = Integer.MIN_VALUE;
                 CHUNK_MINE_SKIPPED.clear();
+            }
+            if (m.name.equals("Nuker")) {
+                nukerTarget = null;
+                nukerRearmTicks = 0;
+                nukerAimTicks = 0;
+                NUKER_SKIPPED.clear();
             }
             if (m.name.equals("Target Lock")) combatTarget = null;
         }
@@ -1176,6 +1288,10 @@ public final class EioClient implements ClientModInitializer {
         chunkMineChunkX = Integer.MIN_VALUE;
         chunkMineChunkZ = Integer.MIN_VALUE;
         CHUNK_MINE_SKIPPED.clear();
+        nukerTarget = null;
+        nukerRearmTicks = 0;
+        nukerAimTicks = 0;
+        NUKER_SKIPPED.clear();
         clickAccumulator = 0.0;
         auraCooldown = 0;
         triggerCooldown = 0;

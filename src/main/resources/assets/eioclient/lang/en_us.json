@@ -42,5 +42,6 @@
   "key.eioclient.tunnel_miner": "Tunnel Miner",
   "key.eioclient.chunk_miner": "Chunk Miner",
   "key.eioclient.tool_saver": "Tool Saver",
-  "key.eioclient.mining_hud": "Mining HUD"
+  "key.eioclient.mining_hud": "Mining HUD",
+  "key.eioclient.nuker": "Nuker"
 }
