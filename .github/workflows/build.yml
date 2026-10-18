@@ -62,6 +62,7 @@ jobs:
           python3 ../../.buildsrc/patch010.py
           python3 ../../.buildsrc/patch013.py
           python3 ../../.buildsrc/patch014.py
+          python3 ../../.buildsrc/patch015.py
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
@@ -89,7 +90,6 @@ jobs:
             "key.eioclient.facing": "Facing",
             "key.eioclient.fullbright": "Fullbright",
             "key.eioclient.chunk_info": "Chunk Info",
-            "key.eioclient.world_time": "World Time",
             "key.eioclient.waypoints": "Waypoints",
             "key.eioclient.test_profile": "Test Profile",
             "key.eioclient.session_info": "Session Info",
@@ -118,11 +118,14 @@ jobs:
           grep -Fq 'defaultValue' "$SRC"
           grep -Fq 'MOUSE_BUTTON_RIGHT' "$SRC"
           grep -Fq 'Auto Swim' "$SRC"
-          grep -Fq 'World Time' "$SRC"
           grep -Fq 'Session Timer' "$SRC"
           grep -Fq 'Health' "$SRC"
           grep -Fq 'Speed' "$SRC"
           grep -Fq 'Facing' "$SRC"
+          if grep -Fq 'getDayTime()' "$SRC"; then
+            echo 'Unverified 26.3 world-time API survived source generation; refusing release'
+            exit 1
+          fi
           if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then
             echo 'Versioned keybind ID found; refusing release'
             exit 1
@@ -179,11 +182,14 @@ jobs:
           grep -Fq 'Health' /tmp/main.strings
           grep -Fq 'Speed' /tmp/main.strings
           grep -Fq 'Facing' /tmp/main.strings
-          grep -Fq 'World Time' /tmp/main.strings
           grep -Fq 'Session Timer' /tmp/main.strings
           grep -Fq 'Test Profile' /tmp/main.strings
           grep -Fq 'doctor' /tmp/main.strings
           grep -Fq 'MADE BY EIO' /tmp/gui.strings
+          if grep -Fq 'getDayTime' /tmp/main.strings; then
+            echo 'Unverified world-time API survived compilation; refusing release'
+            exit 1
+          fi
           if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then
             echo 'Old versioned key ID survived compilation; refusing release'
             exit 1
