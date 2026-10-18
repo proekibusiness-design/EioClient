@@ -1,4 +1,4 @@
-name: Build EioClient 0.27.1 Area LOS fix
+name: Build EioClient 0.27.1
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply Area Miner LOS fix
-        run: python3 .github/eio0271_los_patch.py
 
       - name: Static source and model QA
         shell: bash
@@ -39,7 +36,7 @@ jobs:
               assert token in s, token
           assert 'faceAreaBlock(mc, areaMineTarget)' in s
           assert 'return areaVisibleAimPoint(mc, pos) != null;' in s
-          print('0.27.1 Area Miner LOS static QA passed')
+          print('0.27.1 final static QA passed')
           PY
 
       - name: Unit tests and Fabric build
@@ -63,7 +60,7 @@ jobs:
           for token in findAreaMineTarget areaVisibleAimPoint clearAreaRay faceAreaBlock areaLayerCount updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
           for token in 'EIO-0271-LOS1' 'Layer Height' 'Area Miner'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -79,22 +76,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing Area Miner fix
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize 0.27.1 Area Miner line-of-sight fix'
-            git push origin HEAD:compat/0.24-server-authority
-          fi
-
-      - name: Upload 0.27.1 candidate
+      - name: Upload final 0.27.1 JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.27.1-area-los-candidate
+          name: EioClient-26.3-v0.27.1-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
