@@ -14,7 +14,6 @@ public final class EioClientGameTest implements FabricClientGameTest {
         }
 
         try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
-            singleplayer.getClientLevel().waitForChunksDownload();
             context.waitFor(mc -> mc.player != null && mc.level != null && mc.isLocalServer());
 
             context.runOnClient(mc -> {
