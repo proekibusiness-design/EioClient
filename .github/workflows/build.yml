@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -54,15 +54,11 @@ jobs:
           java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
 
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.14.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.14.0 quality release with compact glass GUI, stable keybinds, diagnostics, config recovery and expanded HUD/QoL modules'; d['authors']=['Eio']; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
+          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.14.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.14.0 quality release with compact glass GUI, stable keybinds, diagnostics, config recovery and expanded HUD/QoL modules'; d['authors']=['Eio']; d['environment']='client'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
 
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
-          python3 ../../.buildsrc/patch010.py
-          python3 ../../.buildsrc/patch013.py
-          python3 ../../.buildsrc/patch014.py
-          python3 ../../.buildsrc/patch015.py
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
@@ -102,7 +98,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SRC=extracted/eioclient/src/main/java/com/eio/client/EioClient.java
+          SRC=eio26/EioClient.java
+          test -s "$SRC"
           grep -Fq 'VERSION = "0.14.0"' "$SRC"
           grep -Fq 'BUILD_ID = "EIO-014-QA1"' "$SRC"
           grep -Fq 'key.eioclient.clickgui' "$SRC"
@@ -122,9 +119,11 @@ jobs:
           grep -Fq 'Health' "$SRC"
           grep -Fq 'Speed' "$SRC"
           grep -Fq 'Facing' "$SRC"
-          if grep -Fq 'getDayTime()' "$SRC"; then exit 1; fi
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then exit 1; fi
-          if grep -Eq 'TODO|FIXME' "$SRC"; then exit 1; fi
+          test "$(grep -c '^[[:space:]]*mod("' "$SRC")" -eq 26
+          if grep -Fq 'getDayTime()' "$SRC"; then echo 'Unverified world-time API found'; exit 1; fi
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then echo 'Versioned keybind ID found'; exit 1; fi
+          if grep -Eq 'TODO|FIXME' "$SRC"; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
+          echo "Source SHA256: $(sha256sum "$SRC" | awk '{print $1}')"
           echo 'Static source QA passed'
 
       - name: Build
@@ -139,13 +138,19 @@ jobs:
           test -n "$JAR"
           test -s "$JAR"
           unzip -tqq "$JAR"
+
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.14.0+26.3"'* ]]
+          [[ "$META" == *'"environment": "client"'* ]]
           [[ "$META" == *'"fabric-api": "*"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
+          [[ "$META" == *'"java": ">=25"'* ]]
+
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
+          jar tf "$JAR" | grep -q '^assets/eioclient/lang/en_us.json$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
+
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           grep -Fq '438' /tmp/gui.javap
@@ -155,6 +160,7 @@ jobs:
           grep -Fq 'jumpForced' /tmp/main.javap
           grep -Fq 'sneakForced' /tmp/main.javap
           grep -Fq 'clickAccumulator' /tmp/main.javap
+
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
           unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
           strings /tmp/EioClient.class > /tmp/main.strings
@@ -172,26 +178,14 @@ jobs:
           grep -Fq 'Test Profile' /tmp/main.strings
           grep -Fq 'doctor' /tmp/main.strings
           grep -Fq 'MADE BY EIO' /tmp/gui.strings
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then exit 1; fi
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
+
           SIZE=$(stat -c%s "$JAR")
           test "$SIZE" -gt 20000
           SHA=$(sha256sum "$JAR" | awk '{print $1}')
           echo "Deep QA passed: $JAR"
           echo "Size: $SIZE bytes"
           echo "SHA256: $SHA"
-
-      - name: Canonicalize passing source in repository
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp extracted/eioclient/src/main/java/com/eio/client/EioClient.java eio26/EioClient.java
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add eio26/EioClient.java
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.14 passing source [skip ci]'
-            git push origin HEAD:main
-          fi
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
@@ -206,5 +200,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: EioClient-26.3-v0.14.0-source
-          path: extracted/eioclient/src/main/java/com/eio/client/EioClient.java
+          path: eio26/EioClient.java
           if-no-files-found: error
