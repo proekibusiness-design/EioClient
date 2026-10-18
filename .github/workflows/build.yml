@@ -1,15 +1,15 @@
-name: Build EioClient 0.29 final
+name: EioClient 0.30 strict Area Miner stage gate
 
 on:
   push:
-    branches: [ feature/0.29-area-miner-crosshair ]
+    branches: [ fix/0.30-area-miner-stage-gate ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static lane and GUI QA
+      - name: Apply strict five-block stage fix
+        run: python3 .github/eio030_stage_fix.py
+
+      - name: Static stage and GUI QA
         shell: bash
         run: |
           set -euo pipefail
@@ -32,23 +35,29 @@ jobs:
           t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
           gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.29.0"' in s
-          assert 'BUILD_ID = "EIO-029-LANE1"' in s
-          assert 'mod_version=0.29.0+26.3' in gp
+          assert 'VERSION = "0.30.0"' in s
+          assert 'BUILD_ID = "EIO-030-STAGE1"' in s
+          assert 'mod_version=0.30.0+26.3' in gp
           assert len(mods)==45, len(mods)
           assert ('Area Miner','Mining') in mods
-          for token in ['currentAreaLaneCell','currentAreaLookTarget','advanceAreaPlaneIfReady','areaPlaneHasBlocks','categoriesScroll','mouseScrolled']:
+          for token in [
+              'currentAreaLaneCell','currentAreaLookTarget','advanceAreaPlaneIfReady',
+              'areaPlaneHasBlocks','areaStageHasBlocks','areaStageSweeps',
+              'containsStage(pos, areaStageIndex)','stageTopY(areaStageIndex)',
+              'stageBottomY(areaStageIndex)','categoriesScroll','mouseScrolled'
+          ]:
               assert token in s, token
-          assert 'findAreaMineTarget' not in s
-          assert 'BlockPos looked = currentAreaLookTarget(mc, areaMiner);' in s
-          assert 'return area.bool("Auto Move").value && distance > 0.45;' in s
-          assert 'Retarget Delay' not in s[s.index('mod("Area Miner"'):s.index('mod("Tool Saver"')]
-          assert 'Aim Timeout' not in s[s.index('mod("Area Miner"'):s.index('mod("Tool Saver"')]
-          assert 'clearsPlanesTopDownInsideFiveBlockStages' in t
+          assert 'ACTIVE 5-BLOCK BAND IS NOT CLEAR' in s
+          assert 'BAND CLEAR - DESCENDING TO Y' in s
+          assert 'band Y ' in s
           assert 'static final int STAGE_DEPTH = 5;' in r
+          assert 'stageBandsAreStrictAndNonOverlapping' in t
+          assert 'clearsPlanesTopDownInsideFiveBlockStages' in t
+          # No regression to old whole-depth/random area scanner.
+          assert 'findAreaMineTarget' not in s
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           assert lang.get('key.eioclient.area_miner') == 'Area Miner'
-          print('0.29 final static QA passed; modules=',len(mods))
+          print('0.30 strict stage QA passed; modules=',len(mods))
           PY
 
       - name: Unit tests and native Fabric build
@@ -62,7 +71,7 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.29.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.30.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
@@ -71,10 +80,18 @@ jobs:
           grep -Fqx 'com/eio/client/EioClient$ClickGui.class' /tmp/jar.list
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          for token in currentAreaLaneCell currentAreaLookTarget updateAreaNavigation areaPlaneHasBlocks advanceAreaPlaneIfReady areaStatus resetAreaRuntime; do grep -Fq "$token" /tmp/main.javap; done
+          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/region.javap
+          for token in currentAreaLaneCell currentAreaLookTarget updateAreaNavigation areaPlaneHasBlocks areaStageHasBlocks advanceAreaPlaneIfReady areaStatus resetAreaRuntime; do
+            grep -Fq "$token" /tmp/main.javap
+          done
+          for token in stageTopY stageBottomY stageLayerCount stageLayerY containsStage containsPlane; do
+            grep -Fq "$token" /tmp/region.javap
+          done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-029-LANE1' 'Area Miner' 'LANE BLOCK NOT CLEARING' 'CANNOT REACH LANE' 'AREA MINER COMPLETE' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-030-STAGE1' 'Area Miner' 'ACTIVE 5-BLOCK BAND IS NOT CLEAR' 'BAND CLEAR - DESCENDING TO Y' 'GUI=760x430 modern-nav-glass'; do
+            grep -Fq "$token" /tmp/main.strings
+          done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -90,10 +107,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.29 JAR
+      - name: Canonicalize passing 0.30 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties src/test/java/com/eio/client/AreaRegionTest.java
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.30 strict five-block Area Miner stages'
+            git push origin HEAD:fix/0.30-area-miner-stage-gate
+          fi
+
+      - name: Upload 0.30 candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.29.0-final
+          name: EioClient-26.3-v0.30.0-stage-gate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
