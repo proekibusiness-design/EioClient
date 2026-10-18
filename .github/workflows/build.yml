@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.8.2+26.3
+          mod_version=0.8.3+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -66,10 +66,10 @@ jobs:
           p=Path('src/main/java/com/eio/client/EioClient.java')
           s=p.read_text()
           s=s.replace('import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;', 'import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;\nimport net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;')
-          s=s.replace('public static final String VERSION = "0.8.0";', 'public static final String VERSION = "0.8.2";')
+          s=s.replace('public static final String VERSION = "0.8.0";', 'public static final String VERSION = "0.8.3";')
           s=s.replace('private static KeyMapping.Category keyCategory;', 'private static KeyMapping.Category keyCategory;\n    private static KeyMapping guiKey;')
           old='        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));\n        for (Mod m : MODS) {\n            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                    "key.eioclient." + slug(m.name), InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory));\n        }\n'
-          new='        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));\n        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                "key.eioclient.v082.clickgui", InputConstants.Type.KEYBOARD, InputConstants.KEY_RSHIFT, keyCategory));\n        for (Mod m : MODS) {\n            int key = m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey;\n            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                    "key.eioclient.v082." + slug(m.name), InputConstants.Type.KEYBOARD, key, keyCategory));\n        }\n'
+          new='        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));\n        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                "key.eioclient.v083.clickgui", InputConstants.Type.KEYBOARD, InputConstants.KEY_RSHIFT, keyCategory));\n        for (Mod m : MODS) {\n            int key = m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey;\n            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(\n                    "key.eioclient.v083." + slug(m.name), InputConstants.Type.KEYBOARD, key, keyCategory));\n        }\n'
           assert old in s, 'registration block not found'
           s=s.replace(old,new)
           old='        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {\n            if (screen instanceof TitleScreen) {\n                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));\n            }\n        });\n'
@@ -86,30 +86,34 @@ jobs:
           assert old in s, 'raw gui tick block not found'
           s=s.replace(old,new)
           s=s.replace('mc.player.swing(InteractionHand.MAIN_HAND);','mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);')
+          old='        if (!notificationText.isEmpty() && System.currentTimeMillis() < notificationUntil) {\n            int x = Math.max(5, (g.guiWidth() - mc.font.width(notificationText)) / 2);\n            g.text(mc.font, notificationText, x, 8, 0xFFFFFFFF, true);\n        }\n'
+          new='        if (!notificationText.isEmpty() && System.currentTimeMillis() < notificationUntil) {\n            int ny = Math.max(18, y + 2);\n            int boxW = mc.font.width(notificationText) + 12;\n            int color = notificationText.endsWith("enabled") ? 0xFF66D69B : 0xFFCC6B6B;\n            g.fill(3, ny - 3, 3 + boxW, ny + 11, 0xB8121720);\n            g.text(mc.font, notificationText, 9, ny, color, true);\n        }\n'
+          assert old in s, 'notification block not found'
+          s=s.replace(old,new)
           p.write_text(s)
           PY
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
             "key.category.eioclient.general": "Eio Client",
-            "key.eioclient.v082.clickgui": "Open Eio ClickGUI",
-            "key.eioclient.v082.kill_aura": "Kill Aura",
-            "key.eioclient.v082.auto_clicker": "Auto Clicker",
-            "key.eioclient.v082.sprint": "Sprint",
-            "key.eioclient.v082.autowalk": "Auto Walk",
-            "key.eioclient.v082.fly": "Fly",
-            "key.eioclient.v082.safewalk": "Safe Walk",
-            "key.eioclient.v082.auto_respawn": "Auto Respawn",
-            "key.eioclient.v082.inventory_info": "Inventory Info",
-            "key.eioclient.v082.durability_hud": "Durability HUD",
-            "key.eioclient.v082.coordinates": "Coordinates",
-            "key.eioclient.v082.fps": "FPS",
-            "key.eioclient.v082.active_modules": "Active Modules",
-            "key.eioclient.v082.fullbright": "Fullbright",
-            "key.eioclient.v082.chunk_info": "Chunk Info",
-            "key.eioclient.v082.waypoints": "Waypoints",
-            "key.eioclient.v082.session_info": "Session Info",
-            "key.eioclient.v082.notifications": "Notifications"
+            "key.eioclient.v083.clickgui": "Open Eio ClickGUI",
+            "key.eioclient.v083.kill_aura": "Kill Aura",
+            "key.eioclient.v083.auto_clicker": "Auto Clicker",
+            "key.eioclient.v083.sprint": "Sprint",
+            "key.eioclient.v083.autowalk": "Auto Walk",
+            "key.eioclient.v083.fly": "Fly",
+            "key.eioclient.v083.safewalk": "Safe Walk",
+            "key.eioclient.v083.auto_respawn": "Auto Respawn",
+            "key.eioclient.v083.inventory_info": "Inventory Info",
+            "key.eioclient.v083.durability_hud": "Durability HUD",
+            "key.eioclient.v083.coordinates": "Coordinates",
+            "key.eioclient.v083.fps": "FPS",
+            "key.eioclient.v083.active_modules": "Active Modules",
+            "key.eioclient.v083.fullbright": "Fullbright",
+            "key.eioclient.v083.chunk_info": "Chunk Info",
+            "key.eioclient.v083.waypoints": "Waypoints",
+            "key.eioclient.v083.session_info": "Session Info",
+            "key.eioclient.v083.notifications": "Notifications"
           }
           EOF
       - name: Build
@@ -119,7 +123,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.8.2
+          name: EioClient-26.3-v0.8.3
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
