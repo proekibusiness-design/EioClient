@@ -40,8 +40,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
-    public static final String VERSION = "0.24.0";
-    public static final String BUILD_ID = "EIO-024-COMPAT1";
+    public static final String VERSION = "0.25.0";
+    public static final String BUILD_ID = "EIO-025-GUI1";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -300,7 +300,7 @@ public final class EioClient implements ClientModInitializer {
                         .then(ClientCommands.literal("doctor").executes(c -> {
                             long bound = MODS.stream().filter(m -> m.bind != null && !m.bind.isUnbound()).count();
                             String report = validateModel() + " | Eio " + VERSION + " [" + BUILD_ID + "] | enabled=" + enabledCount()
-                                    + " bound=" + bound + " | GUI=690x390 scrollable-glass | config=" + configSource
+                                    + " bound=" + bound + " | GUI=720x410 modern-scroll-glass | config=" + configSource
                                     + " | backup=" + Files.exists(CONFIG_BACKUP) + " | safeMode=" + runtimeSafeMode
                                     + " | faults=" + runtimeFaults + " | lastFault=" + lastRuntimeFault
                                     + " | serverCorrections=" + COMPAT.correctionCount() + " correctionPause=" + COMPAT.pauseTicks()
@@ -1696,6 +1696,7 @@ public final class EioClient implements ClientModInitializer {
         private int mobPage;
         private int settingsScroll;
         private int modulesScroll;
+        private int categoriesScroll;
         private static final int MOB_SELECTOR_HEIGHT = 130;
 
         ClickGui() { super(Component.literal("Eio Client")); }
@@ -1706,6 +1707,7 @@ public final class EioClient implements ClientModInitializer {
             if (selectedMod == null) selectedMod = firstInCategory(selectedCategory);
             settingsScroll = 0;
             modulesScroll = 0;
+            categoriesScroll = 0;
         }
         @Override public void removed() { guiOpen = false; save(); super.removed(); }
         @Override public void onClose() { guiOpen = false; save(); super.onClose(); }
@@ -1719,8 +1721,8 @@ public final class EioClient implements ClientModInitializer {
             return null;
         }
 
-        private int panelW() { return Math.max(430, Math.min(690, width - 18)); }
-        private int panelH() { return Math.max(270, Math.min(390, height - 18)); }
+        private int panelW() { return Math.max(430, Math.min(720, width - 18)); }
+        private int panelH() { return Math.max(270, Math.min(410, height - 18)); }
         private int panelX() { return (width - panelW()) / 2; }
         private int panelY() { return (height - panelH()) / 2; }
         private int categoryCount(String category) { int count = 0; for (Mod m : MODS) if (categoryMatches(m, category)) count++; return count; }
@@ -1731,12 +1733,13 @@ public final class EioClient implements ClientModInitializer {
             int accent = categoryColor(selectedCategory);
             String help = selectedMod == null ? "Choose a module" : selectedMod.description;
 
-            g.fill(0, 0, width, height, 0x06000000);
-            g.fill(x + 5, y + 7, x + bw + 5, y + bh + 7, 0x18000000);
-            g.fill(x, y, x + bw, y + bh, 0x72090E14);
-            g.fill(x + 1, y + 1, x + bw - 1, y + bh - 1, 0x24131A22);
-            g.fill(x, y, x + bw, y + 31, 0x920C131B);
-            g.fill(x, y + 30, x + bw, y + 31, 0x50405260);
+            g.fill(0, 0, width, height, 0x04000000);
+            g.fill(x + 5, y + 7, x + bw + 5, y + bh + 7, 0x12000000);
+            g.fill(x, y, x + bw, y + bh, 0x56090E14);
+            g.fill(x + 1, y + 1, x + bw - 1, y + bh - 1, 0x18131A22);
+            g.fill(x, y, x + bw, y + 31, 0x700C131B);
+            g.fill(x, y + 30, x + bw, y + 31, 0x3A405260);
+            g.fill(x + 3, y + 30, x + Math.min(110, Math.max(60, bw / 5)), y + 32, accent);
             g.fill(x, y, x + 3, y + bh, accent);
 
             g.text(font, "EIO", x + 13, y + 10, 0xFFF4F8FB, true);
@@ -1749,28 +1752,45 @@ public final class EioClient implements ClientModInitializer {
 
             int bodyY = y + 39;
             int footerY = y + bh - 25;
-            int railX = x + 10, railW = 98;
+            int railX = x + 10, railW = 108;
             int modsX = railX + railW + 8, modsW = Math.min(198, Math.max(154, bw / 3 - 22));
             int detailX = modsX + modsW + 8;
             int detailW = x + bw - 10 - detailX;
 
-            g.fill(railX, bodyY, railX + railW, footerY - 6, 0x2E10171F);
-            g.fill(modsX, bodyY, modsX + modsW, footerY - 6, 0x2410171F);
-            g.fill(detailX, bodyY, detailX + detailW, footerY - 6, 0x2A10171F);
+            g.fill(railX, bodyY, railX + railW, footerY - 6, 0x2410171F);
+            g.fill(modsX, bodyY, modsX + modsW, footerY - 6, 0x1C10171F);
+            g.fill(detailX, bodyY, detailX + detailW, footerY - 6, 0x2210171F);
 
-            g.text(font, "CATEGORIES", railX + 8, bodyY + 8, 0xFF61717E, false);
-            int cy = bodyY + 23;
+            g.text(font, "CATEGORIES", railX + 8, bodyY + 8, 0xFF738592, false);
+            int categoryTop = bodyY + 23;
+            int categoryBottom = footerY - 9;
+            int categoryViewport = Math.max(1, categoryBottom - categoryTop);
+            int categoryMax = Math.max(0, CATEGORIES.length * 28 - categoryViewport);
+            categoriesScroll = clampScroll(categoriesScroll, categoryMax);
+            int cy = categoryTop - categoriesScroll;
             for (String category : CATEGORIES) {
                 boolean active = category.equals(selectedCategory);
-                boolean hover = in(mx, my, railX + 5, cy, railW - 10, 25);
-                if (hover || active) g.fill(railX + 5, cy, railX + railW - 5, cy + 25, active ? 0x8A1B2731 : 0x4518232C);
-                if (active) g.fill(railX + 5, cy + 5, railX + 8, cy + 20, accent);
-                g.text(font, shortCat(category), railX + 14, cy + 8, active ? 0xFFF3F7FA : 0xFFAAB5BD, active);
-                String count = Integer.toString(categoryCount(category));
-                g.text(font, count, railX + railW - font.width(count) - 12, cy + 8, active ? accent : 0xFF596873, false);
-                if (hover) help = "Open " + category + " modules";
+                boolean visible = cy + 25 > categoryTop && cy < categoryBottom;
+                boolean fullyVisible = cy >= categoryTop && cy + 25 <= categoryBottom;
+                boolean hover = fullyVisible && in(mx, my, railX + 5, cy, railW - 10, 25);
+                if (visible) {
+                    int drawTop = Math.max(cy, categoryTop);
+                    int drawBottom = Math.min(cy + 25, categoryBottom);
+                    if (hover || active) g.fill(railX + 5, drawTop, railX + railW - 5, drawBottom,
+                            active ? 0x761B2731 : 0x3818232C);
+                    if (active) g.fill(railX + 5, Math.max(drawTop, cy + 5), railX + 8, Math.min(drawBottom, cy + 20), accent);
+                    if (fullyVisible) {
+                        g.text(font, shortCat(category), railX + 14, cy + 8, active ? 0xFFF4F8FA : 0xFFABB7BF, active);
+                        String count = Integer.toString(categoryCount(category));
+                        int badgeX = railX + railW - font.width(count) - 15;
+                        g.fill(badgeX - 4, cy + 5, railX + railW - 7, cy + 20, active ? 0x402B3A44 : 0x261A232A);
+                        g.text(font, count, badgeX, cy + 8, active ? accent : 0xFF667681, false);
+                        if (hover) help = "Open " + category + " modules";
+                    }
+                }
                 cy += 28;
             }
+            drawScrollBar(g, railX + railW - 3, categoryTop, categoryViewport, categoriesScroll, categoryMax, accent);
 
             g.text(font, selectedCategory.toUpperCase(Locale.ROOT), modsX + 8, bodyY + 8, accent, true);
             int moduleTop = bodyY + 23;
@@ -1874,7 +1894,7 @@ public final class EioClient implements ClientModInitializer {
             g.fill(x + 10, footerY, x + bw - 10, y + bh - 7, 0x2810171F);
             String footer = trim(help, Math.max(40, (bw - 40) / 6));
             g.text(font, footer, x + 15, footerY + 6, 0xFF7D8B96, false);
-            String hint = "ACTIVE = enabled modules  •  LMB select/toggle  •  RMB reset";
+            String hint = "WHEEL scrolls each panel  •  LMB open/toggle  •  RMB reset";
             g.text(font, hint, x + bw - font.width(hint) - 15, footerY + 6, 0xFF566671, false);
 
             super.extractRenderState(g, mx, my, delta);
@@ -1952,14 +1972,20 @@ public final class EioClient implements ClientModInitializer {
             int bw = panelW(), bh = panelH(), x = panelX(), y = panelY();
             int bodyY = y + 39;
             int footerY = y + bh - 25;
-            int railX = x + 10, railW = 98;
+            int railX = x + 10, railW = 108;
             int modsX = railX + railW + 8, modsW = Math.min(198, Math.max(154, bw / 3 - 22));
             int detailX = modsX + modsW + 8;
             int detailW = x + bw - 10 - detailX;
 
-            int cy = bodyY + 23;
+            int categoryTop = bodyY + 23;
+            int categoryBottom = footerY - 9;
+            int categoryViewport = Math.max(1, categoryBottom - categoryTop);
+            int categoryMax = Math.max(0, CATEGORIES.length * 28 - categoryViewport);
+            categoriesScroll = clampScroll(categoriesScroll, categoryMax);
+            int cy = categoryTop - categoriesScroll;
             for (String category : CATEGORIES) {
-                if (leftClick && in(e.x(), e.y(), railX + 5, cy, railW - 10, 25)) {
+                if (leftClick && cy >= categoryTop && cy + 25 <= categoryBottom
+                        && in(e.x(), e.y(), railX + 5, cy, railW - 10, 25)) {
                     selectedCategory = category;
                     selectedMod = firstInCategory(category);
                     mobPage = 0;
@@ -2087,12 +2113,19 @@ public final class EioClient implements ClientModInitializer {
             int bw = panelW(), bh = panelH(), x = panelX(), y = panelY();
             int bodyY = y + 39;
             int footerY = y + bh - 25;
-            int railX = x + 10, railW = 98;
+            int railX = x + 10, railW = 108;
             int modsX = railX + railW + 8, modsW = Math.min(198, Math.max(154, bw / 3 - 22));
             int detailX = modsX + modsW + 8;
             int detailW = x + bw - 10 - detailX;
             int step = Math.max(18, (int) Math.round(Math.abs(scrollY) * 28.0));
             if (scrollY == 0.0) return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+
+            int categoryTop = bodyY + 23, categoryBottom = footerY - 9;
+            if (in(mouseX, mouseY, railX, bodyY, railW, Math.max(1, footerY - 6 - bodyY))) {
+                int max = Math.max(0, CATEGORIES.length * 28 - Math.max(1, categoryBottom - categoryTop));
+                categoriesScroll = clampScroll(categoriesScroll + (scrollY < 0.0 ? step : -step), max);
+                return true;
+            }
 
             int moduleTop = bodyY + 23, moduleBottom = footerY - 9;
             if (in(mouseX, mouseY, modsX, bodyY, modsW, Math.max(1, footerY - 6 - bodyY))) {
