@@ -20,9 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Prepare Eio Client 0.12.0
+      - name: Prepare Eio Client 0.13.0
         shell: bash
         run: |
+          set -euo pipefail
           rm -rf extracted
           unzip -q eioclient-legit-0.3.0.zip -d extracted
           cd extracted/eioclient
@@ -33,7 +34,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.12.0+26.3
+          mod_version=0.13.0+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -53,65 +54,126 @@ jobs:
           java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
 
-          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.12.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.12.0 ultra compact transparent ClickGUI redesign'; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
+          python3 -c "import json; p='src/main/resources/fabric.mod.json'; d=json.load(open(p)); d['version']='0.13.0+26.3'; d['name']='Eio Client'; d['description']='Eio Client 26.3 v0.13.0 quality release with compact glass GUI, stable keybinds, diagnostics and QoL modules'; d['authors']=['Eio']; d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}; open(p,'w').write(json.dumps(d,indent=2)+'\\n')"
 
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
           python3 ../../.buildsrc/patch010.py
-          python3 ../../.buildsrc/patch012.py
+          python3 ../../.buildsrc/patch013.py
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
             "key.category.eioclient.general": "Eio Client",
-            "key.eioclient.v0120.clickgui": "Open Eio ClickGUI",
-            "key.eioclient.v0120.kill_aura": "Kill Aura",
-            "key.eioclient.v0120.auto_clicker": "Auto Clicker",
-            "key.eioclient.v0120.sprint": "Sprint",
-            "key.eioclient.v0120.autowalk": "Auto Walk",
-            "key.eioclient.v0120.follow": "Follow",
-            "key.eioclient.v0120.fly": "Fly",
-            "key.eioclient.v0120.safewalk": "Safe Walk",
-            "key.eioclient.v0120.auto_jump": "Auto Jump",
-            "key.eioclient.v0120.auto_respawn": "Auto Respawn",
-            "key.eioclient.v0120.inventory_info": "Inventory Info",
-            "key.eioclient.v0120.durability_hud": "Durability HUD",
-            "key.eioclient.v0120.coordinates": "Coordinates",
-            "key.eioclient.v0120.fps": "FPS",
-            "key.eioclient.v0120.active_modules": "Active Modules",
-            "key.eioclient.v0120.target_hud": "Target HUD",
-            "key.eioclient.v0120.fullbright": "Fullbright",
-            "key.eioclient.v0120.chunk_info": "Chunk Info",
-            "key.eioclient.v0120.waypoints": "Waypoints",
-            "key.eioclient.v0120.test_profile": "Test Profile",
-            "key.eioclient.v0120.session_info": "Session Info",
-            "key.eioclient.v0120.notifications": "Notifications"
+            "key.eioclient.clickgui": "Open Eio ClickGUI",
+            "key.eioclient.kill_aura": "Kill Aura",
+            "key.eioclient.auto_clicker": "Auto Clicker",
+            "key.eioclient.sprint": "Sprint",
+            "key.eioclient.autowalk": "Auto Walk",
+            "key.eioclient.follow": "Follow",
+            "key.eioclient.fly": "Fly",
+            "key.eioclient.safewalk": "Safe Walk",
+            "key.eioclient.auto_jump": "Auto Jump",
+            "key.eioclient.auto_respawn": "Auto Respawn",
+            "key.eioclient.inventory_info": "Inventory Info",
+            "key.eioclient.durability_hud": "Durability HUD",
+            "key.eioclient.coordinates": "Coordinates",
+            "key.eioclient.fps": "FPS",
+            "key.eioclient.active_modules": "Active Modules",
+            "key.eioclient.target_hud": "Target HUD",
+            "key.eioclient.fullbright": "Fullbright",
+            "key.eioclient.chunk_info": "Chunk Info",
+            "key.eioclient.waypoints": "Waypoints",
+            "key.eioclient.test_profile": "Test Profile",
+            "key.eioclient.session_info": "Session Info",
+            "key.eioclient.notifications": "Notifications"
           }
           EOF
 
-      - name: Build
-        working-directory: extracted/eioclient
-        run: gradle build --stacktrace
-
-      - name: Verify rebuilt JAR
+      - name: Static source QA
         shell: bash
         run: |
+          set -euo pipefail
+          SRC=extracted/eioclient/src/main/java/com/eio/client/EioClient.java
+          grep -Fq 'VERSION = "0.13.0"' "$SRC"
+          grep -Fq 'key.eioclient.clickgui' "$SRC"
+          grep -Fq 'jumpForced' "$SRC"
+          grep -Fq 'ATOMIC_MOVE' "$SRC"
+          grep -Fq 'literal("doctor")' "$SRC"
+          grep -Fq 'drawRainbowBlockBrand' "$SRC"
+          grep -Fq 'Math.min(438' "$SRC"
+          grep -Fq 'Math.min(254' "$SRC"
+          grep -Fq '.num("FOV"' "$SRC"
+          grep -Fq '.bool("Invisible"' "$SRC"
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' "$SRC"; then
+            echo 'Versioned keybind ID found; refusing release'
+            exit 1
+          fi
+          if grep -Eq 'TODO|FIXME' "$SRC"; then
+            echo 'Unresolved TODO/FIXME found; refusing release'
+            exit 1
+          fi
+          echo 'Static source QA passed'
+
+      - name: Build
+        working-directory: extracted/eioclient
+        run: gradle build --stacktrace --warning-mode all
+
+      - name: Deep JAR QA
+        shell: bash
+        run: |
+          set -euo pipefail
           JAR=$(find extracted/eioclient/build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n 1)
           test -n "$JAR"
+          test -s "$JAR"
+          unzip -tqq "$JAR"
+
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.12.0+26.3"'* ]]
-          jar tf "$JAR" | grep -q 'com/eio/client/EioClient.class'
-          JAVAP=$(javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui')
-          [[ "$JAVAP" == *'sipush        420'* ]]
-          [[ "$JAVAP" == *'sipush        240'* ]]
-          [[ "$JAVAP" == *'drawRainbowBlockBrand'* ]]
-          echo "Verified ultra-compact 420x240 0.12.0 GUI in $JAR"
+          [[ "$META" == *'"version": "0.13.0+26.3"'* ]]
+          [[ "$META" == *'"fabric-api": "*"'* ]]
+          [[ "$META" == *'"minecraft": "~26.3"'* ]]
+
+          jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
+          jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
+          DUPES=$(jar tf "$JAR" | sort | uniq -d)
+          test -z "$DUPES"
+
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
+          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
+          grep -Fq '438' /tmp/gui.javap
+          grep -Fq '254' /tmp/gui.javap
+          grep -Fq 'drawRainbowBlockBrand' /tmp/gui.javap
+          grep -Fq 'categoryColor' /tmp/gui.javap
+          grep -Fq 'jumpForced' /tmp/main.javap
+
+          unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
+          unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
+          strings /tmp/EioClient.class > /tmp/main.strings
+          strings /tmp/ClickGui.class > /tmp/gui.strings
+          grep -Fq 'key.eioclient.clickgui' /tmp/main.strings
+          grep -Fq 'Auto Clicker' /tmp/main.strings
+          grep -Fq 'Kill Aura' /tmp/main.strings
+          grep -Fq 'Follow' /tmp/main.strings
+          grep -Fq 'Test Profile' /tmp/main.strings
+          grep -Fq 'doctor' /tmp/main.strings
+          grep -Fq 'MADE BY EIO' /tmp/gui.strings
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then
+            echo 'Old versioned key ID survived compilation; refusing release'
+            exit 1
+          fi
+
+          SIZE=$(stat -c%s "$JAR")
+          test "$SIZE" -gt 20000
+          SHA=$(sha256sum "$JAR" | awk '{print $1}')
+          echo "Deep QA passed: $JAR"
+          echo "Size: $SIZE bytes"
+          echo "SHA256: $SHA"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.12.0
+          name: EioClient-26.3-v0.13.0
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
