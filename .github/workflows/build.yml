@@ -23,6 +23,9 @@ jobs:
       - name: Apply 0.26 Area Miner and GUI patch
         run: python3 .github/eio026_area_patch.py
 
+      - name: Apply Area Miner compile fix
+        run: python3 .github/eio026_fix1.py
+
       - name: Static source, model and navigation QA
         shell: bash
         run: |
@@ -50,6 +53,7 @@ jobs:
           assert 'private int panelH() { return Math.max(280, Math.min(430, height - 16)); }' in s
           assert s.count('int railX = x + 10, railW = 122;') >= 3
           assert 'public boolean mouseScrolled(' in s
+          assert 'trim(areaStatus(' not in s
           assert Path('eio26/com/eio/client/AreaRegion.java').exists()
           assert Path('src/test/java/com/eio/client/AreaRegionTest.java').exists()
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
