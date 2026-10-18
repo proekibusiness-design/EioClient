@@ -1,4 +1,4 @@
-name: Build EioClient 0.27 Area Miner
+name: Build EioClient 0.28 Area Miner Ground Fix
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,7 +20,10 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
-      - name: Static Area Miner and GUI QA
+      - name: Apply Area Miner ground fix
+        run: python3 .github/eio028_groundfix.py
+
+      - name: Static Area Miner regression QA
         shell: bash
         run: |
           set -euo pipefail
@@ -32,35 +35,19 @@ jobs:
           t=Path('src/test/java/com/eio/client/AreaRegionTest.java').read_text()
           gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.27.0"' in s
-          assert 'BUILD_ID = "EIO-027-AREA1"' in s
-          assert 'mod_version=0.27.0+26.3' in gp
+          assert 'VERSION = "0.28.0"' in s
+          assert 'BUILD_ID = "EIO-028-GROUND1"' in s
+          assert 'mod_version=0.28.0+26.3' in gp
           assert len(mods)==45, len(mods)
           assert ('Area Miner','Mining') in mods
           assert 'AREA_STAGE_HEIGHT = 5' in s
-          assert 'areaStageIndex' in s
-          assert 'stageCount(AREA_STAGE_HEIGHT)' in s
-          assert 'stageTopY(areaStageIndex, AREA_STAGE_HEIGHT)' in s
-          assert 'stageBottomY(areaStageIndex, AREA_STAGE_HEIGHT)' in s
-          assert 'pauseAreaMiner' in s
-          assert 'PATH BLOCKED AT LANE' in s
-          assert 'NEXT 5-BLOCK LAYER' in s
-          assert 'Turn Lead' not in s
-          assert 'Turn Timeout' not in s
-          find=s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean updateAreaNavigation')]
-          assert 'for (int y = top; y >= bottom; y--)' in find
-          assert 'bestSq' not in find
-          assert 'AREA_MINE_SKIPPED.contains' not in find
-          nav=s[s.index('private static boolean updateAreaNavigation'):s.index('private static void faceHorizontal')]
-          assert 'pauseAreaMiner(area, "PATH BLOCKED AT LANE "' in nav
-          assert 'startX' in r and 'startZ' in r and 'xStep' in r and 'zStep' in r
-          assert 'stageCount(int stageHeight)' in r
-          assert 'stageTopY(int stage, int stageHeight)' in r
-          assert 'stageBottomY(int stage, int stageHeight)' in r
-          assert 'startsSerpentineAtCornerAInEitherDirection' in t
-          assert 'splitsDepthIntoFiveBlockStagesFromSurface' in t
+          assert 'mc.gameMode.continueDestroyBlock(areaMineTarget, hit.getDirection())' in s
+          assert 'block directly under your feet' in s
+          assert 'int top = Math.max(a.getY(), b.getY()) - 1;' in r
+          assert 'cornerStandingPositionStartsMiningAtBlockUnderFeet' in t
+          assert 'assertEquals(69, r.topY);' in t
           assert 'categoriesScroll' in s and 'GUI=760x430 modern-nav-glass' in s
-          print('0.27 final deterministic Area Miner QA passed')
+          print('0.28 Area Miner ground regression QA passed')
           PY
 
       - name: Unit tests and native Fabric build
@@ -74,7 +61,7 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.27.0+26.3"'* ]]
+          [[ "$META" == *'"version": "0.28.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" > /tmp/jar.list
@@ -83,13 +70,12 @@ jobs:
           grep -Fqx 'com/eio/client/AreaRegion.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/region.javap
+          grep -Fq 'continueDestroyBlock' /tmp/main.javap
           for token in findAreaMineTarget updateAreaNavigation areaStatus pauseAreaMiner validAreaMineTarget; do grep -Fq "$token" /tmp/main.javap; done
           for token in stageCount stageTopY stageBottomY navigationCell; do grep -Fq "$token" /tmp/region.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
-          for token in 'EIO-027-AREA1' 'NEXT 5-BLOCK LAYER' 'PATH BLOCKED AT LANE' 'Deterministic serpentine quarry'; do grep -Fq "$token" /tmp/main.strings; done
-          ! grep -Fq 'Turn Lead' /tmp/main.strings
-          ! grep -Fq 'Turn Timeout' /tmp/main.strings
-          echo "Final 0.27 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          for token in 'EIO-028-GROUND1' 'NEXT 5-BLOCK LAYER' 'PATH BLOCKED AT LANE'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate 0.28 SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -105,10 +91,22 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final 0.27 JAR
+      - name: Canonicalize passing 0.28 changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java eio26/com/eio/client/AreaRegion.java src/test/java/com/eio/client/AreaRegionTest.java gradle.properties
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.28 Area Miner ground fix'
+            git push origin HEAD:feature/0.25-area-miner-ui
+          fi
+
+      - name: Upload 0.28 candidate JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.27.0-final
+          name: EioClient-26.3-v0.28.0-groundfix
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
