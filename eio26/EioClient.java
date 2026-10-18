@@ -583,7 +583,14 @@ public final class EioClient implements ClientModInitializer {
             if (jumpForced) { mc.options.keyJump.setDown(false); jumpForced = false; }
             if (sneakForced) { mc.options.keyShift.setDown(false); sneakForced = false; }
             if (forwardForced) { mc.options.keyUp.setDown(false); forwardForced = false; }
+            if (attackForced) { mc.options.keyAttack.setDown(false); attackForced = false; }
             followTarget = null;
+            combatTarget = null;
+            chunkMineTarget = null;
+            clickAccumulator = 0.0;
+            auraCooldown = 0;
+            triggerCooldown = 0;
+            toolSaverWarned = false;
             flyForced = false;
             lowHealthAlerted = false;
             lowHealthCooldown = 0;
