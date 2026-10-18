@@ -30,7 +30,7 @@ jobs:
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.8.1+26.3
+          mod_version=0.8.2+26.3
           maven_group=com.eio
           archives_base_name=EioClient-26.3
           EOF
@@ -62,36 +62,99 @@ jobs:
           mkdir -p src/main/java/com/eio/client
           cp ../../eio26/EioClient.java src/main/java/com/eio/client/EioClient.java
 
-          # Minecraft 26.3 uses SDL-backed keyboard codes. Raw -1 is not a valid
-          # keyboard scancode; use the game's UNKNOWN key (value 0) for unbound mappings.
-          sed -i 's/public static final String VERSION = "0.8.0";/public static final String VERSION = "0.8.1";/' src/main/java/com/eio/client/EioClient.java
-          sed -i 's/InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory/InputConstants.Type.KEYBOARD, (m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey), keyCategory/' src/main/java/com/eio/client/EioClient.java
-          sed -i 's/if (m.bind != null) {/if (m.bind != null \&\& !m.bind.isUnbound()) {/' src/main/java/com/eio/client/EioClient.java
-
-          # 26.3 swing animation API requires the item's animation and broadcast flag.
-          sed -i 's|mc.player.swing(InteractionHand.MAIN_HAND);|mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);|' src/main/java/com/eio/client/EioClient.java
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/main/java/com/eio/client/EioClient.java')
+          s=p.read_text()
+          s=s.replace('import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;', 'import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;\nimport net.fabricmc.fabric.api.client.screen.v1.ScreenKeyboardEvents;')
+          s=s.replace('public static final String VERSION = "0.8.0";', 'public static final String VERSION = "0.8.2";')
+          s=s.replace('private static KeyMapping.Category keyCategory;', 'private static KeyMapping.Category keyCategory;\n    private static KeyMapping guiKey;')
+          old='''        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));
+        for (Mod m : MODS) {
+            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                    "key.eioclient." + slug(m.name), InputConstants.Type.KEYBOARD, m.defaultKey, keyCategory));
+        }
+'''
+          new='''        keyCategory = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient", "general"));
+        guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.eioclient.v082.clickgui", InputConstants.Type.KEYSYM, InputConstants.KEY_RSHIFT, keyCategory));
+        for (Mod m : MODS) {
+            int key = m.defaultKey < 0 ? InputConstants.UNKNOWN.getValue() : m.defaultKey;
+            m.bind = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                    "key.eioclient.v082." + slug(m.name), InputConstants.Type.KEYSYM, key, keyCategory));
+        }
+'''
+          if old not in s: raise SystemExit('registration block not found')
+          s=s.replace(old,new)
+          old='''        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
+            if (screen instanceof TitleScreen) {
+                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));
+            }
+        });
+'''
+          new='''        ScreenEvents.AFTER_INIT.register((client, screen, w, h) -> {
+            if (screen instanceof TitleScreen) {
+                ScreenEvents.afterExtract(screen).register((s, g, mx, my, delta) -> drawBrand(g, s.width));
+            }
+            if (screen instanceof ClickGui) {
+                ScreenKeyboardEvents.beforeKeyPress(screen).register((s, event) -> {
+                    if (guiKey != null && guiKey.matches(event)) s.onClose();
+                });
+            }
+        });
+'''
+          if old not in s: raise SystemExit('screen block not found')
+          s=s.replace(old,new)
+          old='''        boolean rshift = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);
+        if (rshift && !guiGlobalPrev && !guiOpen) openGui();
+        guiGlobalPrev = rshift;
+'''
+          new='''        while (guiKey != null && guiKey.consumeClick()) {
+            if (!guiOpen) openGui();
+        }
+'''
+          if old not in s: raise SystemExit('raw rshift tick block not found')
+          s=s.replace(old,new)
+          s=s.replace('''            guiLocalPrev = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);''','''            guiLocalPrev = false;''')
+          old='''        @Override public void tick() {
+            super.tick();
+            boolean down = InputConstants.isKeyDown(InputConstants.KEY_RSHIFT);
+            if (down && !guiLocalPrev) { onClose(); return; }
+            guiLocalPrev = down;
+        }
+'''
+          new='''        @Override public void tick() {
+            super.tick();
+        }
+'''
+          if old not in s: raise SystemExit('raw gui tick block not found')
+          s=s.replace(old,new)
+          s=s.replace('mc.player.swing(InteractionHand.MAIN_HAND);','mc.player.swing(InteractionHand.MAIN_HAND, mc.player.getMainHandItem().getAttackAnimation(), true);')
+          p.write_text(s)
+          PY
 
           mkdir -p src/main/resources/assets/eioclient/lang
           cat > src/main/resources/assets/eioclient/lang/en_us.json <<'EOF'
           {
             "key.category.eioclient.general": "Eio Client",
-            "key.eioclient.kill_aura": "Kill Aura",
-            "key.eioclient.auto_clicker": "Auto Clicker",
-            "key.eioclient.sprint": "Sprint",
-            "key.eioclient.autowalk": "Auto Walk",
-            "key.eioclient.fly": "Fly",
-            "key.eioclient.safewalk": "Safe Walk",
-            "key.eioclient.auto_respawn": "Auto Respawn",
-            "key.eioclient.inventory_info": "Inventory Info",
-            "key.eioclient.durability_hud": "Durability HUD",
-            "key.eioclient.coordinates": "Coordinates",
-            "key.eioclient.fps": "FPS",
-            "key.eioclient.active_modules": "Active Modules",
-            "key.eioclient.fullbright": "Fullbright",
-            "key.eioclient.chunk_info": "Chunk Info",
-            "key.eioclient.waypoints": "Waypoints",
-            "key.eioclient.session_info": "Session Info",
-            "key.eioclient.notifications": "Notifications"
+            "key.eioclient.v082.clickgui": "Open Eio ClickGUI",
+            "key.eioclient.v082.kill_aura": "Kill Aura",
+            "key.eioclient.v082.auto_clicker": "Auto Clicker",
+            "key.eioclient.v082.sprint": "Sprint",
+            "key.eioclient.v082.autowalk": "Auto Walk",
+            "key.eioclient.v082.fly": "Fly",
+            "key.eioclient.v082.safewalk": "Safe Walk",
+            "key.eioclient.v082.auto_respawn": "Auto Respawn",
+            "key.eioclient.v082.inventory_info": "Inventory Info",
+            "key.eioclient.v082.durability_hud": "Durability HUD",
+            "key.eioclient.v082.coordinates": "Coordinates",
+            "key.eioclient.v082.fps": "FPS",
+            "key.eioclient.v082.active_modules": "Active Modules",
+            "key.eioclient.v082.fullbright": "Fullbright",
+            "key.eioclient.v082.chunk_info": "Chunk Info",
+            "key.eioclient.v082.waypoints": "Waypoints",
+            "key.eioclient.v082.session_info": "Session Info",
+            "key.eioclient.v082.notifications": "Notifications"
           }
           EOF
       - name: Build
@@ -101,7 +164,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.8.1
+          name: EioClient-26.3-v0.8.2
           path: |
             extracted/eioclient/build/libs/*.jar
             !extracted/eioclient/build/libs/*-sources.jar
