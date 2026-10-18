@@ -3,15 +3,13 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - 'eio26/EioClient.java'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -21,56 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply QA2 reload hardening
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('eio26/EioClient.java')
-          s=p.read_text()
-          if 'public static final String BUILD_ID = "EIO-015-QA1";' in s:
-              s=s.replace('public static final String BUILD_ID = "EIO-015-QA1";', 'public static final String BUILD_ID = "EIO-015-QA2";', 1)
-          elif 'public static final String BUILD_ID = "EIO-015-QA2";' not in s:
-              raise SystemExit('unexpected build id')
-          start=s.index('    private static void load() {')
-          end=s.index('    private static void save() {', start)
-          block=s[start:end]
-          if 'b.value = b.defaultValue;' not in block:
-              lines=block.splitlines()
-              out=[]
-              in_settings=False
-              transformed=False
-              for line in lines:
-                  if 'for (Setting s : m.settings) {' in line and not transformed:
-                      out.append(line)
-                      indent=line[:len(line)-len(line.lstrip())]+'    '
-                      out.append(indent+'if (s instanceof BoolSetting b) b.value = b.defaultValue;')
-                      out.append(indent+'else if (s instanceof NumSetting n) n.set(n.defaultValue);')
-                      in_settings=True
-                      continue
-                  if in_settings and 'String v = p.getProperty("setting." + m.name + "." + s.name); if (v == null) continue;' in line:
-                      indent=line[:len(line)-len(line.lstrip())]
-                      out.append(indent+'String v = p.getProperty("setting." + m.name + "." + s.name);')
-                      out.append(indent+'if (v == null) continue;')
-                      continue
-                  if in_settings and 'try { if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v); if (s instanceof NumSetting n) n.set(Double.parseDouble(v)); } catch (Exception ignored) {}' in line:
-                      indent=line[:len(line)-len(line.lstrip())]
-                      out.append(indent+'try {')
-                      out.append(indent+'    if (s instanceof BoolSetting b) b.value = Boolean.parseBoolean(v);')
-                      out.append(indent+'    else if (s instanceof NumSetting n) n.set(Double.parseDouble(v));')
-                      out.append(indent+'} catch (Exception ignored) {}')
-                      transformed=True
-                      in_settings=False
-                      continue
-                  out.append(line)
-              if not transformed:
-                  raise SystemExit('reload loop transformation failed')
-              newblock='\n'.join(out)+'\n'
-              s=s[:start]+newblock+s[end:]
-          p.write_text(s)
-          PY
 
       - name: Static project QA
         shell: bash
@@ -82,6 +30,10 @@ jobs:
           test -s eio26/EioClient.java
           test -s src/main/resources/fabric.mod.json
           test -s src/main/resources/assets/eioclient/lang/en_us.json
+          grep -Fq 'minecraft_version=26.3' gradle.properties
+          grep -Fq 'mod_version=0.15.0+26.3' gradle.properties
+          grep -Fq "java.srcDirs = ['eio26']" build.gradle
+          grep -Fq 'reproducibleFileOrder = true' build.gradle
           grep -Fq 'VERSION = "0.15.0"' eio26/EioClient.java
           grep -Fq 'BUILD_ID = "EIO-015-QA2"' eio26/EioClient.java
           grep -Fq 'b.value = b.defaultValue' eio26/EioClient.java
@@ -93,6 +45,7 @@ jobs:
           grep -Fq 'literal("reloadconfig")' eio26/EioClient.java
           grep -Fq 'forwardForced' eio26/EioClient.java
           grep -Fq 'flyForced' eio26/EioClient.java
+          grep -Fq 'configSource' eio26/EioClient.java
           grep -Fq 'Require Attack' eio26/EioClient.java
           grep -Fq 'Low Health Alert' eio26/EioClient.java
           grep -Fq 'Rotation' eio26/EioClient.java
@@ -100,10 +53,11 @@ jobs:
           grep -Fq 'Clock' eio26/EioClient.java
           grep -Fq 'Math.min(438' eio26/EioClient.java
           grep -Fq 'Math.min(254' eio26/EioClient.java
+          grep -Fq 'drawRainbowBlockBrand' eio26/EioClient.java
           test "$(grep -c '^[[:space:]]*mod("' eio26/EioClient.java)" -eq 30
-          if grep -Fq 'getDayTime()' eio26/EioClient.java; then exit 1; fi
-          if grep -Eq 'key\.eioclient\.v0[0-9]+' eio26/EioClient.java; then exit 1; fi
-          if grep -Eq 'TODO|FIXME' eio26/EioClient.java; then exit 1; fi
+          if grep -Fq 'getDayTime()' eio26/EioClient.java; then echo 'Unverified world-time API found'; exit 1; fi
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' eio26/EioClient.java; then echo 'Versioned keybind ID found'; exit 1; fi
+          if grep -Eq 'TODO|FIXME' eio26/EioClient.java; then echo 'Unresolved TODO/FIXME found'; exit 1; fi
           python3 - <<'PY'
           from pathlib import Path
           import json,re
@@ -117,9 +71,11 @@ jobs:
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
           expected={'key.eioclient.'+re.sub(r'(^_+|_+$)','',re.sub(r'[^a-z0-9]+','_',n.lower())) for n in names}
           expected.add('key.eioclient.clickgui')
-          assert not sorted(expected-set(lang))
-          print('QA2 model:',len(mods),'modules /',len(allowed),'categories')
+          missing=sorted(expected-set(lang))
+          assert not missing, f'missing language keys: {missing}'
+          print(f'Final model QA: {len(mods)} modules / {len(allowed)} categories / {len(lang)} language entries')
           PY
+          echo "Source SHA256: $(sha256sum eio26/EioClient.java | awk '{print $1}')"
 
       - name: Build native project
         run: gradle clean build --stacktrace --warning-mode all
@@ -134,17 +90,29 @@ jobs:
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.15.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
+          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
+          [[ "$META" == *'"minecraft": "~26.3"'* ]]
+          [[ "$META" == *'"java": ">=25"'* ]]
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient.class$'
           jar tf "$JAR" | grep -q '^com/eio/client/EioClient\$ClickGui.class$'
+          jar tf "$JAR" | grep -q '^assets/eioclient/lang/en_us.json$'
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           for token in 438 254 drawRainbowBlockBrand categoryColor; do grep -Fq "$token" /tmp/gui.javap; done
           for token in validateModel releaseRuntimeState restoreFly forwardForced clickAccumulator; do grep -Fq "$token" /tmp/main.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
+          unzip -p "$JAR" 'com/eio/client/EioClient$ClickGui.class' > /tmp/ClickGui.class
           strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-015-QA2' 'Auto Clicker' 'Low Health Alert' 'Rotation' 'Memory' 'Clock' 'panic' 'resetsettings' 'reloadconfig' 'doctor'; do grep -Fq "$token" /tmp/main.strings; done
-          echo "QA2 JAR SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          strings /tmp/ClickGui.class > /tmp/gui.strings
+          for token in 'EIO-015-QA2' 'key.eioclient.clickgui' 'Auto Clicker' 'Kill Aura' 'Follow' 'Auto Swim' 'Low Health Alert' 'Rotation' 'Memory' 'Clock' 'Session Timer' 'panic' 'resetsettings' 'reloadconfig' 'doctor'; do grep -Fq "$token" /tmp/main.strings; done
+          grep -Fq 'MADE BY EIO' /tmp/gui.strings
+          if grep -Eq 'key\.eioclient\.v0[0-9]+' /tmp/main.strings; then echo 'Old versioned key ID survived compilation'; exit 1; fi
+          SIZE=$(stat -c%s "$JAR")
+          test "$SIZE" -gt 22000
+          echo "Final native QA passed: $JAR"
+          echo "Size: $SIZE bytes"
+          echo "SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Reproducibility check
         shell: bash
@@ -155,23 +123,11 @@ jobs:
           gradle clean build --quiet
           SECOND=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
           cmp -s /tmp/eio-first.jar "$SECOND"
-          echo "Reproducible QA2 SHA256: $(sha256sum "$SECOND" | awk '{print $1}')"
-
-      - name: Canonicalize QA2 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "Eio CI"
-          git config user.email "actions@users.noreply.github.com"
-          git add eio26/EioClient.java
-          if ! git diff --cached --quiet; then
-            git commit -m "Harden EioClient 0.15 config reload"
-            git push origin HEAD:main
-          fi
+          echo "Reproducible final SHA256: $(sha256sum "$SECOND" | awk '{print $1}')"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.15.0-QA2
+          name: EioClient-26.3-v0.15.0-final
           path: build/libs/*.jar
           if-no-files-found: error
