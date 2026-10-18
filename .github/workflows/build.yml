@@ -45,12 +45,15 @@ jobs:
           target=s[s.index('private static BlockPos findAreaMineTarget'):s.index('private static boolean updateAreaNavigation')]
           assert 'for (int y = region.topY; y >= region.bottomY; y--)' in target
           assert 'LAYER_DEPTH' not in region
+          assert 'static final int MAX_DEPTH = 5;' in region
+          assert 'Math.min(MAX_DEPTH, depth)' in region
+          assert 'hardCapsEvenVeryLargeRequestedDepthAtFiveBlocks' in tests
           assert 'splitsDepthIntoFiveBlockTopDownLayers' not in tests
           for token in ['continueAreaDestroy','stopAreaDestroy','startDestroyBlock','continueDestroyBlock','Mine Timeout','areaDestroyStarted','areaMineWorkTicks']:
               assert token in s, token
           assert 'categoriesScroll' in s and 'public boolean mouseScrolled(' in s
           assert 'GUI=760x430 modern-nav-glass' in s
-          print('0.26.3 final static QA passed; modules=', len(mods))
+          print('0.26.3 standoff + five-block cap static QA passed; modules=', len(mods))
           PY
 
       - name: Unit tests and native Fabric build
@@ -70,9 +73,11 @@ jobs:
           jar tf "$JAR" > /tmp/jar.list
           test -z "$(sort /tmp/jar.list | uniq -d)"
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
+          javap -classpath "$JAR" -c -p 'com.eio.client.AreaRegion' > /tmp/region.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
           for token in continueAreaDestroy stopAreaDestroy areaMiningFace findAreaMineTarget updateAreaNavigation; do grep -Fq "$token" /tmp/main.javap; done
           ! grep -Fq 'areaLayerIndex' /tmp/main.javap
+          grep -Fq 'MAX_DEPTH' /tmp/region.javap
           for token in categoriesScroll mouseScrolled drawScrollBar PointSetting; do grep -Fq "$token" /tmp/gui.javap; done
           unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
           for token in 'EIO-0263-STANDOFF2' 'two-block stand-off' 'Mine Timeout' 'GUI=760x430 modern-nav-glass'; do grep -Fq "$token" /tmp/main.strings; done
