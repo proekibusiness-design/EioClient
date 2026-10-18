@@ -36,15 +36,15 @@ jobs:
           s=Path('eio26/EioClient.java').read_text()
           gp=Path('gradle.properties').read_text()
           mods=re.findall(r'^[ \t]*mod\("',s,re.M)
-          target_count=s.count('mobList("Target Selection"')
-          follow_count=s.count('mobList("Mob Selection"')
-          print('modules=',len(mods),'targetSelectors=',target_count,'followSelectors=',follow_count)
+          target_decl=re.findall(r'^[ \t]*\.mobList\("Target Selection"',s,re.M)
+          follow_decl=re.findall(r'^[ \t]*\.mobList\("Mob Selection"',s,re.M)
+          print('modules=',len(mods),'targetSelectors=',len(target_decl),'followSelectors=',len(follow_decl))
           assert 'VERSION = "0.20.0"' in s
           assert 'BUILD_ID = "EIO-020-QA1"' in s
           assert 'mod_version=0.20.0+26.3' in gp
           assert len(mods)==35
-          assert target_count==3
-          assert follow_count==1
+          assert len(target_decl)==3
+          assert len(follow_decl)==1
           assert s.count('private static boolean validModuleTarget')==1
           assert s.count('nearestTarget(Minecraft mc, Mod selector')==1
           assert s.count('private boolean categoryMatches')==1
