@@ -41,6 +41,22 @@ final class AreaRegionTest {
     }
 
     @Test
+    void serpentinePathMovesOneCellAtATimeAndReversesEachLane() {
+        AreaRegion r = AreaRegion.from(new BlockPos(-2, 70, 5), new BlockPos(1, 70, 7), 4);
+        BlockPos previous = r.navigationCell(0, 70);
+        assertNotNull(previous);
+        for (int i = 1; i < r.navigationCells(); i++) {
+            BlockPos next = r.navigationCell(i, 70);
+            int manhattan = Math.abs(next.getX() - previous.getX()) + Math.abs(next.getZ() - previous.getZ());
+            assertEquals(1, manhattan, "serpentine path must not jump between lane cells");
+            previous = next;
+        }
+        assertEquals(new BlockPos(1, 70, 5), r.navigationCell(3, 70));
+        assertEquals(new BlockPos(1, 70, 6), r.navigationCell(4, 70));
+        assertEquals(new BlockPos(0, 70, 6), r.navigationCell(5, 70));
+    }
+
+    @Test
     void rejectsOversizedNavigationArea() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(AreaRegion.MAX_SIDE, 64, 0), 1);
         assertNotNull(r);
