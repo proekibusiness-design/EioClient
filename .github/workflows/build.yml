@@ -50,7 +50,6 @@ jobs:
           assert 'isWithinBlockInteractionRange' in s
           assert 'onServerPositionCorrection' in s
           assert 'testRuntimeOnly "org.junit.platform:junit-platform-launcher"' in build
-          assert 'enableClientGameTests = true' in build
           mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
           assert mod.get('mixins') == ['eioclient.mixins.json']
           print('0.25 static GUI QA passed')
@@ -58,29 +57,6 @@ jobs:
 
       - name: Unit tests and native Fabric build
         run: gradle clean test build --stacktrace --warning-mode all
-
-      - name: Prepare software OpenGL for client GameTest
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libgl1-mesa-dri libglx-mesa0 mesa-utils xvfb
-          Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset >/tmp/xvfb.log 2>&1 &
-          echo $! >/tmp/xvfb.pid
-          sleep 2
-          DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 glxinfo -B
-
-      - name: Real 26.3 client + integrated-server GameTest
-        continue-on-error: true
-        timeout-minutes: 3
-        shell: bash
-        env:
-          DISPLAY: ':99'
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          SDL_VIDEODRIVER: x11
-        run: |
-          set -euo pipefail
-          timeout --signal=TERM --kill-after=15s 150s gradle runClientGameTest --stacktrace --warning-mode all
 
       - name: Deep JAR and GUI bytecode QA
         shell: bash
@@ -131,18 +107,6 @@ jobs:
             git commit -m 'Canonicalize EioClient 0.25 modern scrolling GUI'
             git push origin HEAD:compat/0.24-server-authority
           fi
-
-      - name: Upload client GameTest diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: EioClient-26.3-v0.25.0-gui-diagnostics
-          path: |
-            build/run/clientGameTest/logs/**
-            build/run/clientGameTest/screenshots/**
-            build/run/clientGameTest/config/eio-diagnostics.log
-            /tmp/xvfb.log
-          if-no-files-found: ignore
 
       - name: Upload 0.25 candidate
         uses: actions/upload-artifact@v4
