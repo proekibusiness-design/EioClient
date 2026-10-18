@@ -3,15 +3,13 @@ name: Build EioClient 26.3
 on:
   push:
     branches: [ main ]
-    paths-ignore:
-      - '.github/eio022_patch.py'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -21,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Apply Eio 0.22 upgrade
-        run: python3 .github/eio022_patch.py
 
       - name: Static source and project QA
         shell: bash
@@ -39,8 +34,7 @@ jobs:
           assert 'BUILD_ID = "EIO-022-QA1"' in s
           assert 'mod_version=0.22.0+26.3' in gp
           assert len(mods)==42
-          speed=[x for x in mods if x[0]=='Speed']
-          assert speed == [('Speed','Movement')], speed
+          assert [x for x in mods if x[0]=='Speed'] == [('Speed','Movement')]
           assert '.num("Multiplier", 1.8, 1.0, 5.0, 0.1' in s
           assert '.bool("Ground Only", true' in s
           assert '.bool("Show HUD", true' in s
@@ -49,14 +43,14 @@ jobs:
           chunk_block=s[s.index('        boolean miningAllowed = miningToolSafe(mc);'):s.index('        boolean clickAllowed = !clicker.bool("Require Attack").value')]
           assert 'hit.getBlockPos().equals(chunkMineTarget)' in chunk_block
           assert 'mc.level.getBlockState(chunkMineTarget).isAir()' in chunk_block
-          assert 'mc.options.keyAttack.setDown(false)' in s
+          assert 'CHUNK_MINE_SKIPPED.add' in chunk_block
+          assert 'chunkMineRearmTicks--' in chunk_block
           assert 'Test Profile' not in s
           assert 'public boolean mouseScrolled(' in s
           assert 'TODO' not in s and 'FIXME' not in s
           lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          assert 'key.eioclient.speed' in lang
-          assert 'key.eioclient.chunk_miner' in lang
-          print('0.22 static QA passed: modules=',len(mods),'speed category=',speed[0][1])
+          assert 'key.eioclient.speed' in lang and 'key.eioclient.chunk_miner' in lang
+          print('0.22 final static QA passed')
           PY
 
       - name: Native Java and Fabric build
@@ -72,6 +66,7 @@ jobs:
           META=$(unzip -p "$JAR" fabric.mod.json)
           [[ "$META" == *'"version": "0.22.0+26.3"'* ]]
           [[ "$META" == *'"environment": "client"'* ]]
+          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
@@ -84,7 +79,7 @@ jobs:
           for token in 'EIO-022-QA1' 'Multiplier' 'Ground Only' 'Show HUD' 'Retarget Delay' 'Aim Timeout' 'Chunk Miner'; do grep -Fq "$token" /tmp/main.strings; done
           ! grep -Fq 'Test Profile' /tmp/main.strings
           test "$(stat -c%s "$JAR")" -gt 45000
-          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -100,22 +95,10 @@ jobs:
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Canonicalize passing 0.22 source
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'Eio CI'
-          git config user.email 'actions@users.noreply.github.com'
-          git add eio26/EioClient.java gradle.properties
-          if ! git diff --cached --quiet; then
-            git commit -m 'Canonicalize EioClient 0.22 speed and chunk miner fixes'
-            git push origin HEAD:main
-          fi
-
-      - name: Upload 0.22 candidate
+      - name: Upload final JAR
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.22.0-candidate
+          name: EioClient-26.3-v0.22.0-final
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
