@@ -75,14 +75,16 @@ jobs:
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
           [[ "$META" == *'eioclient.mixins.json'* ]]
-          test -z "$(jar tf "$JAR" | sort | uniq -d)"
-          jar tf "$JAR" | grep -Fq 'com/eio/client/CompatibilityState.class'
-          jar tf "$JAR" | grep -Fq 'com/eio/client/mixin/ClientPacketListenerMixin.class'
+          jar tf "$JAR" > /tmp/jar.list
+          test -z "$(sort /tmp/jar.list | uniq -d)"
+          grep -Fqx 'com/eio/client/CompatibilityState.class' /tmp/jar.list
+          grep -Fqx 'com/eio/client/mixin/ClientPacketListenerMixin.class' /tmp/jar.list
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
           javap -classpath "$JAR" -c -p 'com.eio.client.mixin.ClientPacketListenerMixin' > /tmp/mixin.javap
           for token in onServerPositionCorrection releaseCorrectionSensitiveState withinVanillaBlockRange withinVanillaEntityRange applyMovementSpeed; do grep -Fq "$token" /tmp/main.javap; done
-          grep -Fq 'handleMovePlayer' /tmp/mixin.javap
-          unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
+          grep -Fq 'onServerPositionCorrection' /tmp/mixin.javap
+          unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
+          strings /tmp/EioClient.class > /tmp/main.strings
           for token in 'EIO-024-COMPAT1' 'Compatibility Guard' 'Vanilla Ranges' 'Pause On Correction' 'SERVER_POSITION'; do grep -Fq "$token" /tmp/main.strings; done
           echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
