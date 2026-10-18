@@ -41,7 +41,7 @@ import java.util.*;
 
 public final class EioClient implements ClientModInitializer {
     public static final String VERSION = "0.26.0";
-    public static final String BUILD_ID = "EIO-026-AREA2";
+    public static final String BUILD_ID = "EIO-026-AREA3";
     private static final Path CONFIG = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties");
     private static final Path CONFIG_BACKUP = FabricLoader.getInstance().getConfigDir().resolve("eioclient.properties.bak");
     private static final Path PROFILE_DIR = FabricLoader.getInstance().getConfigDir().resolve("eio").resolve("profiles");
@@ -251,7 +251,9 @@ public final class EioClient implements ClientModInitializer {
                 .num("Depth", 8.0, 1.0, 64.0, 1.0, "Vertical depth included in the selected zone. Area Miner only targets the current serpentine lane column instead of mining surrounding blocks.")
                 .num("Retarget Delay", 1.0, 1.0, 4.0, 1.0, "Ticks to release attack before starting the next area target.")
                 .num("Aim Timeout", 14.0, 4.0, 50.0, 1.0, "Ticks allowed to line up with a target before temporarily skipping it.")
-                .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach one navigation cell before moving to the next cell.")
+                .num("Move Timeout", 100.0, 20.0, 240.0, 5.0, "Ticks allowed to reach a normal navigation cell before skipping it if movement is blocked.")
+                .num("Turn Lead", 0.95, 0.65, 1.25, 0.05, "At lane ends, begin the U-turn this many blocks before the exact end-cell center once its block column is clear.")
+                .num("Turn Timeout", 8.0, 2.0, 20.0, 1.0, "Maximum ticks to wait at a lane end before handing off to the next serpentine lane.")
                 .bool("Auto Move", true, "Walk the serpentine lane path after the block column directly ahead is clear.")
                 .bool("Sprint", false, "Sprint while Area Miner is navigating between cells.")
                 .bool("Auto Jump", true, "Jump over simple one-block obstacles while Area Miner is moving.")
@@ -1255,18 +1257,42 @@ public final class EioClient implements ClientModInitializer {
 
         double dx = goalX - px, dz = goalZ - pz;
         double distance = Math.sqrt(dx * dx + dz * dz);
-        if (!outside && distance < 0.72) {
-            areaNavIndex++;
-            areaMoveTicks = 0;
-            return false;
-        }
-        if (++areaMoveTicks >= Math.max(20, (int) Math.round(area.num("Move Timeout").value))) {
-            if (!outside) areaNavIndex++;
-            areaMoveTicks = 0;
-            return false;
+        if (!outside) {
+            boolean rowEnd = region.isRowEnd(areaNavIndex);
+            double arrival = rowEnd ? area.num("Turn Lead").value : 0.78;
+            int timeout = rowEnd
+                    ? Math.max(2, (int) Math.round(area.num("Turn Timeout").value))
+                    : Math.max(20, (int) Math.round(area.num("Move Timeout").value));
+            areaMoveTicks++;
+            if (distance < arrival || areaMoveTicks >= timeout) {
+                areaNavIndex++;
+                areaMoveTicks = 0;
+                if (areaNavIndex >= region.navigationCells()) return false;
+
+                // Fast handoff: immediately inspect and face the next serpentine cell instead of
+                // returning to an idle tick or waiting for the general movement timeout.
+                BlockPos next = region.navigationCell(areaNavIndex, mc.player.blockPosition().getY());
+                if (next == null) return false;
+                BlockPos nextBlock = findAreaMineTarget(mc, area);
+                if (nextBlock != null) {
+                    areaMineTarget = nextBlock;
+                    areaMineAimTicks = 0;
+                    return false;
+                }
+                goalX = next.getX() + 0.5;
+                goalZ = next.getZ() + 0.5;
+                faceHorizontal(mc.player, goalX, goalZ);
+                return true;
+            }
+        } else {
+            areaMoveTicks++;
+            if (areaMoveTicks >= Math.max(20, (int) Math.round(area.num("Move Timeout").value))) {
+                areaMoveTicks = 0;
+                return false;
+            }
         }
         faceHorizontal(mc.player, goalX, goalZ);
-        return distance > 0.45;
+        return distance > 0.35;
     }
 
     private static void faceHorizontal(Player player, double x, double z) {

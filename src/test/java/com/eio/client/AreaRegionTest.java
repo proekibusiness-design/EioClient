@@ -57,6 +57,19 @@ final class AreaRegionTest {
     }
 
     @Test
+    void identifiesSerpentineRowEndsForFastTurns() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(2, 64, 1), 2);
+        assertFalse(r.isRowEnd(-1));
+        assertFalse(r.isRowEnd(0));
+        assertFalse(r.isRowEnd(1));
+        assertTrue(r.isRowEnd(2));
+        assertFalse(r.isRowEnd(3));
+        assertFalse(r.isRowEnd(4));
+        assertTrue(r.isRowEnd(5));
+        assertFalse(r.isRowEnd(6));
+    }
+
+    @Test
     void rejectsOversizedNavigationArea() {
         AreaRegion r = AreaRegion.from(new BlockPos(0, 64, 0), new BlockPos(AreaRegion.MAX_SIDE, 64, 0), 1);
         assertNotNull(r);

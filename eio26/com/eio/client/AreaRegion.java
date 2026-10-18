@@ -69,6 +69,11 @@ final class AreaRegion {
         return new BlockPos(minX + col, navY, minZ + row);
     }
 
+    boolean isRowEnd(int index) {
+        int cells = navigationCells();
+        return cells > 0 && index >= 0 && index < cells && ((index + 1) % width()) == 0;
+    }
+
     String summary() {
         return minX + "," + minZ + " -> " + maxX + "," + maxZ
                 + " | Y " + topY + ".." + bottomY + " | " + width() + "x" + length() + "x" + depth();
