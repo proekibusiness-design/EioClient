@@ -2,10 +2,7 @@ package com.eio.client;
 
 import net.minecraft.core.BlockPos;
 
-/**
- * Immutable horizontal quarry bounds plus a top-down mining depth.
- * Kept separate from client input code so region math can be regression tested.
- */
+/** Immutable quarry bounds, Corner-A-oriented serpentine navigation and top-down stage math. */
 final class AreaRegion {
     static final int MAX_SIDE = 128;
 
@@ -15,24 +12,38 @@ final class AreaRegion {
     final int maxZ;
     final int topY;
     final int bottomY;
+    final int startX;
+    final int startZ;
+    final int xStep;
+    final int zStep;
 
-    private AreaRegion(int minX, int maxX, int minZ, int maxZ, int topY, int bottomY) {
+    private AreaRegion(int minX, int maxX, int minZ, int maxZ, int topY, int bottomY,
+                       int startX, int startZ, int xStep, int zStep) {
         this.minX = minX;
         this.maxX = maxX;
         this.minZ = minZ;
         this.maxZ = maxZ;
         this.topY = topY;
         this.bottomY = bottomY;
+        this.startX = startX;
+        this.startZ = startZ;
+        this.xStep = xStep;
+        this.zStep = zStep;
     }
 
     static AreaRegion from(BlockPos a, BlockPos b, int depth) {
         if (a == null || b == null) return null;
         int safeDepth = Math.max(1, Math.min(64, depth));
         int top = Math.max(a.getY(), b.getY());
+        int xs = Integer.compare(b.getX(), a.getX());
+        int zs = Integer.compare(b.getZ(), a.getZ());
+        if (xs == 0) xs = 1;
+        if (zs == 0) zs = 1;
         return new AreaRegion(
                 Math.min(a.getX(), b.getX()), Math.max(a.getX(), b.getX()),
                 Math.min(a.getZ(), b.getZ()), Math.max(a.getZ(), b.getZ()),
-                top, top - safeDepth + 1);
+                top, top - safeDepth + 1,
+                a.getX(), a.getZ(), xs, zs);
     }
 
     int width() { return maxX - minX + 1; }
@@ -48,6 +59,23 @@ final class AreaRegion {
         return width() * length();
     }
 
+    int stageCount(int stageHeight) {
+        int h = Math.max(1, stageHeight);
+        return (depth() + h - 1) / h;
+    }
+
+    int stageTopY(int stage, int stageHeight) {
+        int h = Math.max(1, stageHeight);
+        int count = stageCount(h);
+        int s = Math.max(0, Math.min(Math.max(0, count - 1), stage));
+        return topY - s * h;
+    }
+
+    int stageBottomY(int stage, int stageHeight) {
+        int h = Math.max(1, stageHeight);
+        return Math.max(bottomY, stageTopY(stage, h) - h + 1);
+    }
+
     boolean contains(BlockPos pos) {
         return pos != null
                 && pos.getX() >= minX && pos.getX() <= maxX
@@ -60,13 +88,15 @@ final class AreaRegion {
 
     BlockPos navigationCell(int index, int y) {
         int cells = navigationCells();
-        if (cells <= 0) return null;
-        int normalized = Math.floorMod(index, cells);
-        int row = normalized / width();
-        int col = normalized % width();
-        if ((row & 1) != 0) col = width() - 1 - col;
+        if (cells <= 0 || index < 0 || index >= cells) return null;
+        int row = index / width();
+        int column = index % width();
+        int along = (row & 1) == 0 ? column : width() - 1 - column;
+        int x = startX + along * xStep;
+        int z = startZ + row * zStep;
         int navY = Math.max(bottomY, Math.min(topY, y));
-        return new BlockPos(minX + col, navY, minZ + row);
+        if (x < minX || x > maxX || z < minZ || z > maxZ) return null;
+        return new BlockPos(x, navY, z);
     }
 
     boolean isRowEnd(int index) {

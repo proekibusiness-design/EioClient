@@ -76,4 +76,27 @@ final class AreaRegionTest {
         assertFalse(r.supportedSize());
         assertEquals(0, r.navigationCells());
     }
+    @Test
+    void startsSerpentineAtCornerAInEitherDirection() {
+        AreaRegion r = AreaRegion.from(new BlockPos(2, 64, 1), new BlockPos(0, 64, 0), 6);
+        assertEquals(new BlockPos(2, 64, 1), r.navigationCell(0, 64));
+        assertEquals(new BlockPos(1, 64, 1), r.navigationCell(1, 64));
+        assertEquals(new BlockPos(0, 64, 1), r.navigationCell(2, 64));
+        assertEquals(new BlockPos(0, 64, 0), r.navigationCell(3, 64));
+        assertEquals(new BlockPos(1, 64, 0), r.navigationCell(4, 64));
+        assertEquals(new BlockPos(2, 64, 0), r.navigationCell(5, 64));
+    }
+
+    @Test
+    void splitsDepthIntoFiveBlockStagesFromSurface() {
+        AreaRegion r = AreaRegion.from(new BlockPos(0, 70, 0), new BlockPos(1, 70, 1), 12);
+        assertEquals(3, r.stageCount(5));
+        assertEquals(70, r.stageTopY(0, 5));
+        assertEquals(66, r.stageBottomY(0, 5));
+        assertEquals(65, r.stageTopY(1, 5));
+        assertEquals(61, r.stageBottomY(1, 5));
+        assertEquals(60, r.stageTopY(2, 5));
+        assertEquals(59, r.stageBottomY(2, 5));
+    }
+
 }
