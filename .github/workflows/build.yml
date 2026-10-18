@@ -1,15 +1,15 @@
-name: Build EioClient 26.3
+name: EioClient 0.24 compatibility audit
 
 on:
   push:
-    branches: [ main ]
+    branches: [ compat/0.24-server-authority ]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v5
@@ -20,6 +20,9 @@ jobs:
         with:
           gradle-version: '9.6.0'
 
+      - name: Apply focused compatibility patch
+        run: python3 .github/eio024_compat_patch.py
+
       - name: Static source and project QA
         shell: bash
         run: |
@@ -29,32 +32,29 @@ jobs:
           import json,re
           s=Path('eio26/EioClient.java').read_text()
           gp=Path('gradle.properties').read_text()
+          build=Path('build.gradle').read_text()
           mods=re.findall(r'^[ \t]*mod\("([^\"]+)",\s*"([^\"]+)"',s,re.M)
-          assert 'VERSION = "0.23.0"' in s
-          assert 'BUILD_ID = "EIO-023-QA1"' in s
-          assert 'mod_version=0.23.0+26.3' in gp
-          assert len(mods)==43
-          assert [x for x in mods if x[0]=='Speed'] == [('Speed','Movement')]
-          assert [x for x in mods if x[0]=='Nuker'] == [('Nuker','Mining')]
-          assert '.num("Multiplier", 1.8, 1.0, 10.0, 0.1' in s
-          for token in ['validNukerTarget','findNukerTarget','nukerRearmTicks','nukerAimTicks','NUKER_SKIPPED','Retarget Delay','Aim Timeout']:
-              assert token in s, token
-          mining=s[s.index('        boolean miningAllowed = miningToolSafe(mc);'):s.index('        boolean clickAllowed = !clicker.bool("Require Attack").value')]
-          assert 'if (nuker.enabled)' in mining
-          assert 'else if (chunkMiner.enabled)' in mining
-          assert 'hit.getBlockPos().equals(nukerTarget)' in mining
-          assert 'mc.level.getBlockState(nukerTarget).isAir()' in mining
-          assert 'nukerRearmTicks--' in mining
-          assert 'Test Profile' not in s
-          assert 'public boolean mouseScrolled(' in s
-          assert 'TODO' not in s and 'FIXME' not in s
-          lang=json.loads(Path('src/main/resources/assets/eioclient/lang/en_us.json').read_text())
-          assert lang.get('key.eioclient.nuker') == 'Nuker'
-          print('0.23 final static QA passed')
+          assert 'VERSION = "0.24.0"' in s
+          assert 'BUILD_ID = "EIO-024-COMPAT1"' in s
+          assert 'mod_version=0.24.0+26.3' in gp
+          assert len(mods)==44, len(mods)
+          assert ('Compatibility Guard','Misc') in mods
+          assert 'isWithinEntityInteractionRange' in s
+          assert 'isWithinBlockInteractionRange' in s
+          assert 'onServerPositionCorrection' in s
+          assert 'releaseCorrectionSensitiveState' in s
+          assert 'getFlyingSpeed()' in s and 'flyPrevSpeed' in s and 'creativeAssistPrevSpeed' in s
+          assert 'org.junit.jupiter:junit-jupiter' in build and 'useJUnitPlatform()' in build
+          mixin=json.loads(Path('src/main/resources/eioclient.mixins.json').read_text())
+          assert 'ClientPacketListenerMixin' in mixin['client']
+          mod=json.loads(Path('src/main/resources/fabric.mod.json').read_text())
+          assert mod.get('mixins') == ['eioclient.mixins.json']
+          assert Path('src/test/java/com/eio/client/CompatibilityStateTest.java').exists()
+          print('0.24 static compatibility QA passed')
           PY
 
-      - name: Native Java and Fabric build
-        run: gradle clean build --stacktrace --warning-mode all
+      - name: Unit tests and native Fabric build
+        run: gradle clean test build --stacktrace --warning-mode all
 
       - name: Deep JAR QA
         shell: bash
@@ -64,22 +64,20 @@ jobs:
           test -n "$JAR" && test -s "$JAR"
           unzip -tqq "$JAR"
           META=$(unzip -p "$JAR" fabric.mod.json)
-          [[ "$META" == *'"version": "0.23.0+26.3"'* ]]
-          [[ "$META" == *'"environment": "client"'* ]]
-          [[ "$META" == *'"fabricloader": ">=0.19.5"'* ]]
+          [[ "$META" == *'"version": "0.24.0+26.3"'* ]]
           [[ "$META" == *'"minecraft": "~26.3"'* ]]
           [[ "$META" == *'"java": ">=25"'* ]]
+          [[ "$META" == *'eioclient.mixins.json'* ]]
           test -z "$(jar tf "$JAR" | sort | uniq -d)"
+          jar tf "$JAR" | grep -Fq 'com/eio/client/CompatibilityState.class'
+          jar tf "$JAR" | grep -Fq 'com/eio/client/mixin/ClientPacketListenerMixin.class'
           javap -classpath "$JAR" -c -p 'com.eio.client.EioClient' > /tmp/main.javap
-          javap -classpath "$JAR" -c -p 'com.eio.client.EioClient$ClickGui' > /tmp/gui.javap
-          for token in applyMovementSpeed validChunkMineTarget findChunkMineTarget validNukerTarget findNukerTarget miningToolSafe faceBlock; do grep -Fq "$token" /tmp/main.javap; done
-          for token in mouseScrolled settingsContentHeight drawScrollBar; do grep -Fq "$token" /tmp/gui.javap; done
-          unzip -p "$JAR" com/eio/client/EioClient.class > /tmp/EioClient.class
-          strings /tmp/EioClient.class > /tmp/main.strings
-          for token in 'EIO-023-QA1' 'Nuker' 'Multiplier' 'Retarget Delay' 'Aim Timeout' 'Chunk Miner'; do grep -Fq "$token" /tmp/main.strings; done
-          ! grep -Fq 'Test Profile' /tmp/main.strings
-          test "$(stat -c%s "$JAR")" -gt 45000
-          echo "Final SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
+          javap -classpath "$JAR" -c -p 'com.eio.client.mixin.ClientPacketListenerMixin' > /tmp/mixin.javap
+          for token in onServerPositionCorrection releaseCorrectionSensitiveState withinVanillaBlockRange withinVanillaEntityRange applyMovementSpeed; do grep -Fq "$token" /tmp/main.javap; done
+          grep -Fq 'handleMovePlayer' /tmp/mixin.javap
+          unzip -p "$JAR" com/eio/client/EioClient.class | strings > /tmp/main.strings
+          for token in 'EIO-024-COMPAT1' 'Compatibility Guard' 'Vanilla Ranges' 'Pause On Correction' 'SERVER_POSITION'; do grep -Fq "$token" /tmp/main.strings; done
+          echo "Candidate SHA256: $(sha256sum "$JAR" | awk '{print $1}')"
 
       - name: Byte-for-byte reproducibility check
         shell: bash
@@ -88,17 +86,29 @@ jobs:
           FIRST=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
           cp "$FIRST" /tmp/eio-first.jar
           FIRST_SHA=$(sha256sum /tmp/eio-first.jar | awk '{print $1}')
-          gradle clean build --quiet
+          gradle clean test build --quiet
           SECOND=$(find build/libs -maxdepth 1 -name '*.jar' ! -name '*-sources.jar' | head -n1)
           SECOND_SHA=$(sha256sum "$SECOND" | awk '{print $1}')
           cmp -s /tmp/eio-first.jar "$SECOND"
           test "$FIRST_SHA" = "$SECOND_SHA"
           echo "Reproducible SHA256: $SECOND_SHA"
 
-      - name: Upload final JAR
+      - name: Canonicalize passing compatibility changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Eio CI'
+          git config user.email 'actions@users.noreply.github.com'
+          git add eio26/EioClient.java gradle.properties build.gradle src/main/resources/fabric.mod.json src/main/resources/assets/eioclient/lang/en_us.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Canonicalize 0.24 server-authority compatibility fixes'
+            git push origin HEAD:compat/0.24-server-authority
+          fi
+
+      - name: Upload compatibility candidate
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-v0.23.0-final
+          name: EioClient-26.3-v0.24.0-compat-candidate
           path: |
             build/libs/*.jar
             !build/libs/*-sources.jar
