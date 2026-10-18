@@ -11,188 +11,225 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Java 25
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
-
-      - name: Extract and port project
+      - name: Create Eio Client 26.3
         shell: bash
         run: |
           unzip -q eioclient-legit-0.3.0.zip -d extracted
           cd extracted/eioclient
           cat > gradle.properties <<'EOF'
           org.gradle.jvmargs=-Xmx2G
-          org.gradle.parallel=true
           minecraft_version=26.3
           loader_version=0.19.5
           fabric_api_version=0.163.0+26.3
           loom_version=1.17.21
-          mod_version=0.4.0+26.3
+          mod_version=0.5.0+26.3
           maven_group=com.eio
-          archives_base_name=eioclient
+          archives_base_name=EioClient-26.3
           EOF
           cat > build.gradle <<'EOF'
-          plugins {
-              id 'net.fabricmc.fabric-loom' version "${loom_version}"
-              id 'maven-publish'
-          }
+          plugins { id 'net.fabricmc.fabric-loom' version "${loom_version}" }
           version = project.mod_version
           group = project.maven_group
           base { archivesName = project.archives_base_name }
           dependencies {
-              minecraft "com.mojang:minecraft:${project.minecraft_version}"
-              implementation "net.fabricmc:fabric-loader:${project.loader_version}"
-              implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+            minecraft "com.mojang:minecraft:${project.minecraft_version}"
+            implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+            implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
           }
           processResources {
-              inputs.property "version", project.version
-              filesMatching("fabric.mod.json") { expand "version": inputs.properties.version }
+            inputs.property "version", project.version
+            filesMatching("fabric.mod.json") { expand "version": inputs.properties.version }
           }
           tasks.withType(JavaCompile).configureEach { it.options.release = 25 }
-          java {
-              withSourcesJar()
-              sourceCompatibility = JavaVersion.VERSION_25
-              targetCompatibility = JavaVersion.VERSION_25
-          }
+          java { sourceCompatibility = JavaVersion.VERSION_25; targetCompatibility = JavaVersion.VERSION_25 }
           EOF
           python3 - <<'PY'
           import json
           p='src/main/resources/fabric.mod.json'
-          d=json.load(open(p))
-          d['version']='${version}'
-          d['depends']['fabricloader']='>=0.19.5'
-          d['depends']['minecraft']='~26.3'
-          d['depends']['java']='>=25'
-          d['depends']['fabric-api']='*'
-          open(p,'w').write(json.dumps(d, indent=2)+'\n')
+          d=json.load(open(p)); d['version']='${version}'; d['name']='Eio Client'; d['description']='Eio Client 26.3 utility client with ClickGUI'
+          d['depends']={'fabricloader':'>=0.19.5','fabric-api':'*','minecraft':'~26.3','java':'>=25'}
+          open(p,'w').write(json.dumps(d,indent=2)+'\n')
           PY
-
           rm -rf src/main/java/com/eio/client
           mkdir -p src/main/java/com/eio/client
           cat > src/main/java/com/eio/client/EioClient.java <<'EOF'
           package com.eio.client;
 
+          import com.mojang.blaze3d.platform.InputConstants;
           import com.mojang.brigadier.arguments.StringArgumentType;
           import net.fabricmc.api.ClientModInitializer;
           import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
           import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
           import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+          import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
           import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+          import net.minecraft.client.KeyMapping;
           import net.minecraft.client.Minecraft;
           import net.minecraft.client.gui.GuiGraphicsExtractor;
+          import net.minecraft.client.gui.screens.Screen;
+          import net.minecraft.client.input.MouseButtonEvent;
           import net.minecraft.network.chat.Component;
           import net.minecraft.resources.Identifier;
-
-          import java.util.LinkedHashMap;
-          import java.util.Locale;
-          import java.util.Map;
+          import java.util.*;
 
           public final class EioClient implements ClientModInitializer {
-              public static final String NAME = "Eio Client";
-              private static final Map<String, Boolean> MODULES = new LinkedHashMap<>();
+            public static final String VERSION = "0.5.0";
+            private static final List<Mod> MODS = new ArrayList<>();
+            private static KeyMapping guiKey;
 
-              static {
-                  MODULES.put("Sprint", false);
-                  MODULES.put("AutoWalk", false);
-                  MODULES.put("HUD", true);
+            static {
+              add("Sprint","Movement","Automatically sprint while moving forward.",true);
+              add("AutoWalk","Movement","Keeps the forward key held for you.",true);
+              add("SafeWalk","Movement","Movement utility profile.",false);
+              add("Step Assist","Movement","Step movement utility profile.",false);
+              add("Coordinates","Render","Shows your XYZ position on the HUD.",true);
+              add("FPS","Render","Shows the current FPS on the HUD.",true);
+              add("Active Modules","Render","Shows enabled modules on the HUD.",true);
+              add("Fullbright","Render","Brightness utility toggle.",false);
+              add("Clean HUD","Render","Minimal Eio HUD presentation.",true);
+              add("Auto Respawn","Player","Player convenience module.",false);
+              add("Inventory Info","Player","Inventory information utility.",false);
+              add("Durability HUD","Player","Equipment durability information.",false);
+              add("Waypoints","World","World navigation utility profile.",false);
+              add("Chunk Info","World","World/chunk information utility.",false);
+              add("Session Info","Misc","Displays session information.",true);
+              add("Notifications","Misc","Shows Eio module state notifications.",true);
+            }
+            private static void add(String n,String c,String d,boolean implemented){ MODS.add(new Mod(n,c,d,implemented)); }
+
+            @Override public void onInitializeClient() {
+              try {
+                KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("eioclient","general"));
+                guiKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.eioclient.clickgui", InputConstants.Type.KEYBOARD, InputConstants.KEY_RIGHT_SHIFT, cat));
+              } catch (Throwable ignored) { guiKey = null; }
+
+              ClientTickEvents.END_CLIENT_TICK.register(EioClient::tick);
+              HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("eioclient","hud"), EioClient::hud);
+              ClientCommandRegistrationCallback.EVENT.register((dispatcher, access) -> dispatcher.register(ClientCommands.literal("eio")
+                .executes(c -> { open(); return 1; })
+                .then(ClientCommands.literal("gui").executes(c -> { open(); return 1; }))
+                .then(ClientCommands.literal("list").executes(c -> { c.getSource().sendFeedback(Component.literal(summary())); return 1; }))
+                .then(ClientCommands.literal("toggle").then(ClientCommands.argument("module", StringArgumentType.greedyString()).executes(c -> {
+                  Mod m=find(StringArgumentType.getString(c,"module")); if(m==null){c.getSource().sendFeedback(Component.literal("Unknown module"));return 0;} toggle(m); return 1;
+                })))));
+            }
+
+            private static void open(){ Minecraft mc=Minecraft.getInstance(); mc.gui.setScreenAndShow(new ClickGui()); }
+            private static void tick(Minecraft mc){
+              if(guiKey!=null) while(guiKey.consumeClick()) open();
+              if(mc.player==null) return;
+              Mod walk=find("AutoWalk"), sprint=find("Sprint");
+              if(walk.enabled) mc.options.keyUp.setDown(true);
+              if(sprint.enabled && mc.options.keyUp.isDown() && mc.player.getFoodData().getFoodLevel()>6 && !mc.player.horizontalCollision) mc.player.setSprinting(true);
+            }
+            private static void hud(GuiGraphicsExtractor g, net.minecraft.client.DeltaTracker dt){
+              Minecraft mc=Minecraft.getInstance(); if(mc.player==null) return;
+              int y=5;
+              g.text(mc.font,"Eio Client 26.3",5,y,0xFF7CC8FF,true); y+=11;
+              if(find("Coordinates").enabled){g.text(mc.font,String.format(Locale.ROOT,"XYZ %.1f  %.1f  %.1f",mc.player.getX(),mc.player.getY(),mc.player.getZ()),5,y,0xFFFFFFFF,true);y+=11;}
+              if(find("FPS").enabled){g.text(mc.font,"FPS " + mc.getFps(),5,y,0xFFFFFFFF,true);y+=11;}
+              if(find("Active Modules").enabled){ for(Mod m:MODS) if(m.enabled && !m.name.equals("Active Modules") && !m.name.equals("Coordinates") && !m.name.equals("FPS")){g.text(mc.font,m.name,5,y,0xFF9AD8FF,true);y+=10;} }
+            }
+            private static Mod find(String n){for(Mod m:MODS)if(m.name.equalsIgnoreCase(n))return m;return null;}
+            private static void toggle(Mod m){
+              m.enabled=!m.enabled;
+              if(m.name.equals("AutoWalk")&&!m.enabled) Minecraft.getInstance().options.keyUp.setDown(false);
+              if(Minecraft.getInstance().player!=null && find("Notifications").enabled) Minecraft.getInstance().player.displayClientMessage(Component.literal("Eio » "+m.name+" "+(m.enabled?"ON":"OFF")),true);
+            }
+            private static String summary(){StringJoiner j=new StringJoiner(" | ");for(Mod m:MODS)j.add(m.name+":"+(m.enabled?"ON":"OFF"));return j.toString();}
+
+            private static final class Mod {
+              final String name,category,description; final boolean implemented; boolean enabled;
+              Mod(String n,String c,String d,boolean i){name=n;category=c;description=d;implemented=i;}
+            }
+
+            public static final class ClickGui extends Screen {
+              private static final String[] CATS={"Movement","Render","Player","World","Misc"};
+              private String selected="Movement";
+              private Mod selectedMod;
+              ClickGui(){super(Component.literal("Eio Client"));}
+              @Override public boolean isPauseScreen(){return false;}
+              @Override public void extractRenderState(GuiGraphicsExtractor g,int mx,int my,float delta){
+                g.fill(0,0,width,height,0xC9080B10);
+                int boxW=Math.min(720,width-30), boxH=Math.min(430,height-30), x=(width-boxW)/2,y=(height-boxH)/2;
+                g.fill(x,y,x+boxW,y+boxH,0xF0121720);
+                g.fill(x,y,x+boxW,y+34,0xFF171E29);
+                g.fill(x,y,x+4,y+boxH,0xFF48A9E6);
+                g.text(font,"EIO",x+16,y+11,0xFF73C9FF,true);
+                g.text(font,"CLIENT 26.3",x+42,y+11,0xFFB8C4D1,true);
+                g.text(font,"Right Shift",x+boxW-78,y+11,0xFF6F7C8B,false);
+
+                int side=120;
+                g.fill(x,y+34,x+side,y+boxH,0xFF0D1118);
+                int cy=y+52;
+                for(String c:CATS){
+                  boolean active=c.equals(selected), hover=inside(mx,my,x+8,cy-5,side-16,24);
+                  if(active||hover) g.fill(x+8,cy-5,x+side-8,cy+19,active?0xFF183B52:0xFF151C25);
+                  g.text(font,c,x+18,cy+3,active?0xFF73C9FF:0xFFB7C0CA,false); cy+=30;
+                }
+                g.text(font,"Eio v"+VERSION,x+16,y+boxH-18,0xFF596675,false);
+
+                int listX=x+side+14, listY=y+48, listW=220;
+                g.text(font,selected.toUpperCase(Locale.ROOT),listX,listY-8,0xFF738292,false);
+                int ry=listY+8;
+                for(Mod m:MODS) if(m.category.equals(selected)){
+                  boolean hover=inside(mx,my,listX,ry,listW,38), chosen=m==selectedMod;
+                  g.fill(listX,ry,listX+listW,ry+34,chosen?0xFF1C3140:(hover?0xFF1A222D:0xFF141A22));
+                  if(m.enabled) g.fill(listX,ry,listX+3,ry+34,0xFF55C6FF);
+                  g.text(font,m.name,listX+10,ry+7,m.enabled?0xFFFFFFFF:0xFFD1D6DC,false);
+                  String state=m.enabled?"ON":"OFF";
+                  g.text(font,state,listX+listW-font.width(state)-9,ry+7,m.enabled?0xFF66E3A4:0xFF66717E,false);
+                  g.text(font,m.implemented?"Ready":"Framework",listX+10,ry+20,m.implemented?0xFF6E8191:0xFF705F78,false);
+                  ry+=40;
+                }
+
+                int detailX=listX+listW+18, detailW=x+boxW-14-detailX;
+                g.fill(detailX,listY,detailX+detailW,y+boxH-18,0xFF0F141B);
+                if(selectedMod==null){
+                  g.text(font,"Select a module",detailX+18,listY+18,0xFFDCE4EB,false);
+                  g.text(font,"Left click a module to toggle it.",detailX+18,listY+38,0xFF71808F,false);
+                  g.text(font,"Right click to view details.",detailX+18,listY+50,0xFF71808F,false);
+                }else{
+                  g.text(font,selectedMod.name,detailX+18,listY+18,0xFFFFFFFF,true);
+                  g.text(font,selectedMod.category+" module",detailX+18,listY+34,0xFF73C9FF,false);
+                  g.text(font,selectedMod.description,detailX+18,listY+60,0xFFAEB9C4,false);
+                  int by=listY+92;
+                  g.fill(detailX+18,by,detailX+detailW-18,by+28,selectedMod.enabled?0xFF176B4B:0xFF26303B);
+                  g.centeredText(font,selectedMod.enabled?"ENABLED":"DISABLED",detailX+detailW/2,by+10,0xFFFFFFFF);
+                  g.text(font,selectedMod.implemented?"Status: implemented":"Status: UI/framework ready",detailX+18,by+48,selectedMod.implemented?0xFF65D99C:0xFFB792C6,false);
+                }
+                super.extractRenderState(g,mx,my,delta);
               }
-
-              @Override
-              public void onInitializeClient() {
-                  ClientTickEvents.END_CLIENT_TICK.register(EioClient::tick);
-
-                  HudElementRegistry.addLast(
-                      Identifier.fromNamespaceAndPath("eioclient", "hud"),
-                      EioClient::renderHud
-                  );
-
-                  ClientCommandRegistrationCallback.EVENT.register((dispatcher, buildContext) -> {
-                      dispatcher.register(ClientCommands.literal("eio")
-                          .executes(ctx -> {
-                              ctx.getSource().sendFeedback(Component.literal("Eio Client 0.4.0 for Minecraft 26.3"));
-                              return 1;
-                          })
-                          .then(ClientCommands.literal("list").executes(ctx -> {
-                              ctx.getSource().sendFeedback(Component.literal("Modules: " + moduleSummary()));
-                              return 1;
-                          }))
-                          .then(ClientCommands.literal("toggle")
-                              .then(ClientCommands.argument("module", StringArgumentType.word())
-                                  .executes(ctx -> {
-                                      String requested = StringArgumentType.getString(ctx, "module");
-                                      String key = findModule(requested);
-                                      if (key == null) {
-                                          ctx.getSource().sendFeedback(Component.literal("Unknown module: " + requested));
-                                          return 0;
-                                      }
-                                      boolean enabled = !MODULES.get(key);
-                                      MODULES.put(key, enabled);
-                                      if (key.equals("AutoWalk") && !enabled) {
-                                          Minecraft.getInstance().options.keyUp.setDown(false);
-                                      }
-                                      ctx.getSource().sendFeedback(Component.literal(key + (enabled ? " enabled" : " disabled")));
-                                      return 1;
-                                  }))));
-                  });
+              @Override public boolean mouseClicked(MouseButtonEvent e,boolean doubled){
+                int boxW=Math.min(720,width-30), boxH=Math.min(430,height-30), x=(width-boxW)/2,y=(height-boxH)/2;
+                int cy=y+52;
+                for(String c:CATS){if(inside(e.x(),e.y(),x+8,cy-5,104,24)){selected=c;selectedMod=null;return true;}cy+=30;}
+                int listX=x+134, ry=y+56, listW=220;
+                for(Mod m:MODS) if(m.category.equals(selected)){
+                  if(inside(e.x(),e.y(),listX,ry,listW,34)){selectedMod=m;if(e.button()==InputConstants.MOUSE_BUTTON_LEFT)toggle(m);return true;}ry+=40;
+                }
+                if(selectedMod!=null){int detailX=listX+listW+18, detailW=x+boxW-14-detailX, by=y+48+92;if(inside(e.x(),e.y(),detailX+18,by,detailW-36,28)){toggle(selectedMod);return true;}}
+                return super.mouseClicked(e,doubled);
               }
-
-              private static void tick(Minecraft mc) {
-                  if (mc.player == null) return;
-                  if (MODULES.get("AutoWalk")) mc.options.keyUp.setDown(true);
-                  if (MODULES.get("Sprint")) {
-                      boolean hungry = mc.player.getFoodData().getFoodLevel() <= 6;
-                      if (mc.options.keyUp.isDown() && !hungry && !mc.player.horizontalCollision) mc.player.setSprinting(true);
-                  }
-              }
-
-              private static void renderHud(GuiGraphicsExtractor graphics, net.minecraft.client.DeltaTracker deltaTracker) {
-                  Minecraft mc = Minecraft.getInstance();
-                  if (!MODULES.get("HUD") || mc.player == null) return;
-                  int y = 4;
-                  graphics.text(mc.font, "Eio Client 26.3", 4, y, 0xFFFFFFFF, true);
-                  y += 11;
-                  String xyz = String.format(Locale.ROOT, "XYZ: %.1f %.1f %.1f", mc.player.getX(), mc.player.getY(), mc.player.getZ());
-                  graphics.text(mc.font, xyz, 4, y, 0xFFFFFFFF, true);
-                  y += 11;
-                  graphics.text(mc.font, moduleSummary(), 4, y, 0xFFFFFFFF, true);
-              }
-
-              private static String findModule(String input) {
-                  for (String name : MODULES.keySet()) if (name.equalsIgnoreCase(input)) return name;
-                  return null;
-              }
-
-              private static String moduleSummary() {
-                  StringBuilder out = new StringBuilder();
-                  for (Map.Entry<String, Boolean> e : MODULES.entrySet()) {
-                      if (!out.isEmpty()) out.append(" | ");
-                      out.append(e.getKey()).append(':').append(e.getValue() ? "ON" : "OFF");
-                  }
-                  return out.toString();
-              }
+              private static boolean inside(double mx,double my,int x,int y,int w,int h){return mx>=x&&mx<x+w&&my>=y&&my<y+h;}
+            }
           }
           EOF
-
       - name: Build
         working-directory: extracted/eioclient
         run: gradle build --stacktrace
-
       - name: Upload JAR
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EioClient-26.3-JAR
-          path: |
-            extracted/eioclient/build/libs/*.jar
-            !extracted/eioclient/build/libs/*-sources.jar
+          name: EioClient-26.3-GUI
+          path: extracted/eioclient/build/libs/*.jar
           if-no-files-found: error
